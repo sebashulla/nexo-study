@@ -1,0 +1,25 @@
+{
+  "name": "nexo-study-mvp",
+  "private": true,
+  "version": "0.8.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:api": "node server.mjs",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "start:api": "node server.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "latest",
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "typescript": "latest",
+    "react": "latest",
+    "react-dom": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  }
+}

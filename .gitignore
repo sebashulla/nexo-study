@@ -1,0 +1,26 @@
+# Dependencies / builds
+node_modules/
+dist/
+coverage/
+
+# Vercel
+.vercel/
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.local
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
