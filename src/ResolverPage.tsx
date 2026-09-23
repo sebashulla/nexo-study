@@ -1,206 +1,200 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useAuth } from './auth/AuthContext'
 import { callAI } from './lib/aiClient'
 import { imageLimits, prepareImages, type ImageAttachment } from './lib/imageUtils'
 import { supabase } from './lib/supabase'
 import { ResponseRenderer } from './ResponseRenderer'
 
-type HistoryItem = {
-  id?: string
-  question: string
-  category: string
-  answer: string
-  createdAt: string
-  deep: boolean
-  imageCount: number
-}
+type ChatMessage = { id: string; role: 'user' | 'assistant'; text: string; createdAt: string; imageCount?: number; remoteId?: string }
+type ChatThread = { id: string; title: string; category: string; deep: boolean; createdAt: string; updatedAt: string; messages: ChatMessage[] }
+type PendingRequest = { threadId: string; question: string; category: string; deep: boolean; images: ImageAttachment[]; context?: string }
+type LegacyItem = { id?: string; question: string; category: string; answer: string; createdAt: string; deep: boolean; imageCount: number }
 
+const CHAT_PREFIX = 'nexo-study-resolver-chats-v1:'
 const HISTORY_PREFIX = 'nexo-study-resolver-history-v4:'
 const LEGACY_HISTORY_PREFIX = 'nexo-study-resolver-history-v3:'
+const chatKey = (userId: string, workspaceId: string) => `${CHAT_PREFIX}${userId}:${workspaceId}`
+const newId = () => crypto.randomUUID()
 
-function historyKey(userId: string, workspaceId: string) { return `${HISTORY_PREFIX}${userId}:${workspaceId}` }
-
-function loadLocalHistory(userId: string, workspaceId: string): HistoryItem[] {
+function loadThreads(userId: string, workspaceId: string): ChatThread[] {
   try {
-    const saved = localStorage.getItem(historyKey(userId, workspaceId))
+    const saved = localStorage.getItem(chatKey(userId, workspaceId))
+    if (saved) {
+      const parsed: unknown = JSON.parse(saved)
+      if (Array.isArray(parsed)) return parsed.filter((thread): thread is ChatThread =>
+        thread && typeof thread.id === 'string' && typeof thread.title === 'string' && Array.isArray(thread.messages) &&
+        thread.messages.every((message: ChatMessage) => message && typeof message.text === 'string' && (message.role === 'user' || message.role === 'assistant')))
+    }
+    const old = localStorage.getItem(`${HISTORY_PREFIX}${userId}:${workspaceId}`)
       ?? (workspaceId === 'general' ? localStorage.getItem(`${LEGACY_HISTORY_PREFIX}${userId}`) : null)
-    const parsed: unknown = JSON.parse(saved || '[]')
-    return Array.isArray(parsed) ? parsed : []
-  }
-  catch { return [] }
+    const legacy: unknown = JSON.parse(old || '[]')
+    if (!Array.isArray(legacy)) return []
+    return legacy.filter((item): item is LegacyItem => item && typeof item.question === 'string' && typeof item.answer === 'string').map((item, index) => ({
+      id: `legacy-${index}-${item.createdAt || index}`,
+      title: item.question,
+      category: item.category || 'General',
+      deep: Boolean(item.deep),
+      createdAt: item.createdAt || new Date().toISOString(),
+      updatedAt: item.createdAt || new Date().toISOString(),
+      messages: [
+        { id: `legacy-user-${index}`, role: 'user' as const, text: item.question, createdAt: item.createdAt || '', imageCount: item.imageCount || 0 },
+        { id: `legacy-answer-${index}`, role: 'assistant' as const, text: item.answer, createdAt: item.createdAt || '', remoteId: item.id },
+      ],
+    }))
+  } catch { return [] }
 }
 
 const suggestions: Record<string, string[]> = {
-  General: ['Explícame esto como para un examen', 'Resume la idea central', '¿Cuál sería la respuesta correcta y por qué?'],
-  Matemáticas: ['Resuelve paso a paso y comprueba el resultado', '¿Qué fórmula debo usar aquí?', 'Muéstrame el método más corto'],
-  Biología: ['Identifica la estructura y explica su función', '¿Qué hallazgos importantes aparecen?', 'Compáralo con la alternativa más parecida'],
-  Química: ['Balancea y explica el procedimiento', 'Identifica el concepto químico clave', 'Resuelve mostrando unidades y fórmula'],
-  Historia: ['Ubica el hecho en su contexto histórico', 'Explica causas y consecuencias', '¿Qué dato distingue esta alternativa?'],
+  General: ['Explícame esto paso a paso', 'Resume la idea central', '¿Cuál es la respuesta y por qué?'],
+  Matemáticas: ['Resuelve paso a paso y comprueba el resultado', '¿Qué fórmula debo usar?', 'Muéstrame el método más corto'],
+  Biología: ['Explica la función de esta estructura', '¿Qué conceptos debo recordar?', 'Compara estas dos alternativas'],
+  Química: ['Balancea y explica el procedimiento', 'Identifica el concepto clave', 'Resuelve mostrando unidades'],
+  Historia: ['Ubica el hecho en su contexto', 'Explica causas y consecuencias', '¿Qué diferencia estas alternativas?'],
 }
+const categories = Object.keys(suggestions)
 
-export function ResolverPage({ workspaceId }: { workspaceId: string }) {
+export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; feedback?: ReactNode }) {
   const { user } = useAuth()
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [category, setCategory] = useState('General')
-  const [deep, setDeep] = useState(false)
+  const [initialThreads] = useState<ChatThread[]>(() => user ? loadThreads(user.id, workspaceId) : [])
+  const [threads, setThreads] = useState(initialThreads)
+  const [activeId, setActiveId] = useState<string | null>(initialThreads[0]?.id ?? null)
+  const [category, setCategory] = useState(initialThreads[0]?.category ?? 'General')
+  const [deep, setDeep] = useState(initialThreads[0]?.deep ?? false)
   const [question, setQuestion] = useState('')
   const [images, setImages] = useState<ImageAttachment[]>([])
   const [dragging, setDragging] = useState(false)
-  const [answer, setAnswer] = useState('')
-  const [lastQuestion, setLastQuestion] = useState('')
-  const [lastImageCount, setLastImageCount] = useState(0)
-  const [followUp, setFollowUp] = useState('')
-  const [busy, setBusy] = useState(false)
   const [imageBusy, setImageBusy] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [thinkingStage, setThinkingStage] = useState(0)
   const [error, setError] = useState('')
-  const [copied, setCopied] = useState(false)
-  const [history, setHistory] = useState<HistoryItem[]>(() => user ? loadLocalHistory(user.id, workspaceId) : [])
-  const categories = ['General', 'Matemáticas', 'Biología', 'Química', 'Historia']
-  const currentSuggestions = useMemo(() => suggestions[category] || suggestions.General, [category])
+  const [failedRequest, setFailedRequest] = useState<PendingRequest | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const messageListRef = useRef<HTMLDivElement>(null)
+  const activeThread = threads.find(thread => thread.id === activeId)
 
   useEffect(() => {
     if (!user) return
-    try { localStorage.setItem(historyKey(user.id, workspaceId), JSON.stringify(history.slice(0, 25))) }
-    catch { /* The answer stays available in this session. */ }
-  }, [history, user, workspaceId])
+    try { localStorage.setItem(chatKey(user.id, workspaceId), JSON.stringify(threads.slice(0, 25))) }
+    catch { setError('No pudimos guardar esta conversación en el navegador. Libera espacio de almacenamiento.') }
+  }, [threads, user, workspaceId])
+
+  useEffect(() => {
+    if (!busy) return
+    const timer = window.setInterval(() => setThinkingStage(stage => (stage + 1) % 3), 1400)
+    return () => window.clearInterval(timer)
+  }, [busy])
+
+  useEffect(() => {
+    const list = messageListRef.current
+    if (list) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
+  }, [activeId, activeThread?.messages.length, thinkingStage, error])
 
   const importImages = async (files: File[]) => {
     if (!files.length) return
-    setImageBusy(true)
-    setError('')
-    try {
-      setImages(await prepareImages(files, images))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudieron preparar las imágenes.')
-    } finally {
-      setImageBusy(false)
-      if (inputRef.current) inputRef.current.value = ''
-    }
+    setImageBusy(true); setError('')
+    try { setImages(await prepareImages(files, images)) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudieron preparar las imágenes.') }
+    finally { setImageBusy(false); if (fileRef.current) fileRef.current.value = '' }
   }
 
-  const solve = async (override?: { question: string; context?: string; keepImages?: boolean }) => {
-    const prompt = (override?.question ?? question).trim()
-    const activeImages = override?.keepImages === false ? [] : images
-    if (!prompt && activeImages.length === 0) return setError('Escribe una pregunta o adjunta al menos una imagen.')
-    setBusy(true)
-    setError('')
-    setCopied(false)
-    if (!override?.context) setAnswer('')
-
+  const requestAnswer = async (request: PendingRequest) => {
+    setBusy(true); setThinkingStage(0); setError(''); setFailedRequest(null)
     try {
-      const text = await callAI({
-        task: 'solve',
-        question: prompt || 'Resuelve los ejercicios o analiza el caso mostrado en las imágenes.',
-        category,
-        mode: deep ? 'deep' : 'standard',
-        deep,
-        context: override?.context,
-        images: activeImages,
+      const answer = await callAI({
+        task: 'solve', question: request.question, category: request.category,
+        mode: request.deep ? 'deep' : 'standard', deep: request.deep,
+        context: request.context, images: request.images,
       })
-
-      const historyItem: HistoryItem = {
-        question: prompt || `${activeImages.length} imagen${activeImages.length === 1 ? '' : 'es'}`,
-        category,
-        answer: text,
-        createdAt: new Date().toISOString(),
-        deep,
-        imageCount: activeImages.length,
-      }
-
-      setAnswer(text)
-      setLastQuestion(historyItem.question)
-      setLastImageCount(activeImages.length)
-      setHistory(prev => [historyItem, ...prev].slice(0, 25))
-
+      const answerId = newId()
+      const now = new Date().toISOString()
+      setThreads(current => current.map(thread => thread.id === request.threadId ? {
+        ...thread, updatedAt: now, messages: [...thread.messages, { id: answerId, role: 'assistant' as const, text: answer, createdAt: now }],
+      } : thread))
       if (user && supabase) {
-        const { data } = await supabase.from('ai_queries').insert({
-          user_id: user.id,
-          task: 'solve',
-          category,
-          question: historyItem.question,
-          answer: text,
-          deep,
-          image_count: activeImages.length,
-        }).select('id').single()
-        if (data?.id) setHistory(prev => prev.map((item, index) => index === 0 ? { ...item, id: data.id } : item))
+        void (async () => {
+          const { data } = await supabase.from('ai_queries').insert({
+            user_id: user.id, task: 'solve', category: request.category, question: request.question,
+            answer, deep: request.deep, image_count: request.images.length,
+          }).select('id').single()
+          if (data?.id) setThreads(current => current.map(thread => thread.id === request.threadId ? {
+            ...thread, messages: thread.messages.map(message => message.id === answerId ? { ...message, remoteId: data.id } : message),
+          } : thread))
+        })()
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Nexo IA no está disponible en este momento.')
-    } finally {
-      setBusy(false)
-    }
+    } catch (cause) {
+      setFailedRequest(request)
+      setError(cause instanceof Error ? cause.message : 'Nexo IA no está disponible en este momento.')
+    } finally { setBusy(false) }
   }
 
-  const askFollowUp = async () => {
-    const q = followUp.trim()
-    if (!q || !answer) return
-    const context = `Pregunta anterior: ${lastQuestion}\nRespuesta anterior de Nexo: ${answer}`
-    setFollowUp('')
-    await solve({ question: q, context, keepImages: false })
+  const send = () => {
+    if (busy || imageBusy) return
+    const prompt = question.trim()
+    if (!prompt && !images.length) { setError('Escribe una pregunta o adjunta al menos una imagen.'); return }
+    const text = prompt || 'Analiza las imágenes adjuntas'
+    const threadId = activeId ?? newId()
+    const now = new Date().toISOString()
+    const previous = activeThread?.messages ?? []
+    const context = previous.slice(-12).map(message => `${message.role === 'user' ? 'Estudiante' : 'Nexo'}: ${message.text}`).join('\n\n').slice(-12000) || undefined
+    const activeImages = images
+    const turn: ChatMessage = { id: newId(), role: 'user', text, createdAt: now, imageCount: activeImages.length }
+    setThreads(current => {
+      const existing = current.find(thread => thread.id === threadId)
+      if (existing) return [{ ...existing, updatedAt: now, messages: [...existing.messages, turn] }, ...current.filter(thread => thread.id !== threadId)]
+      return [{ id: threadId, title: text, category, deep, createdAt: now, updatedAt: now, messages: [turn] }, ...current]
+    })
+    setActiveId(threadId); setQuestion(''); setImages([])
+    void requestAnswer({ threadId, question: prompt || 'Resuelve los ejercicios o analiza el caso mostrado en las imágenes.', category, deep, images: activeImages, context })
   }
 
-  const copyAnswer = async () => {
-    try {
-      await navigator.clipboard.writeText(answer)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    } catch {}
+  const startNew = () => {
+    if (busy) return
+    setActiveId(null); setQuestion(''); setImages([]); setCategory('General'); setDeep(false); setError(''); setFailedRequest(null)
+  }
+
+  const openThread = (thread: ChatThread) => {
+    if (busy) return
+    setActiveId(thread.id); setCategory(thread.category); setDeep(thread.deep); setQuestion(''); setImages([]); setError(''); setFailedRequest(null)
+  }
+
+  const copyAnswer = async (message: ChatMessage) => {
+    try { await navigator.clipboard.writeText(message.text); setCopiedId(message.id); window.setTimeout(() => setCopiedId(null), 1600) }
+    catch { /* Clipboard access may be unavailable. */ }
   }
 
   const clearHistory = async () => {
-    const ids = history.map(item => item.id).filter((id): id is string => Boolean(id))
-    setHistory([])
+    if (busy || !window.confirm('¿Borrar todas las conversaciones de este espacio?')) return
+    const ids = threads.flatMap(thread => thread.messages.map(message => message.remoteId).filter((id): id is string => Boolean(id)))
+    setThreads([]); startNew()
     if (user && workspaceId === 'general') localStorage.removeItem(`${LEGACY_HISTORY_PREFIX}${user.id}`)
     if (user && supabase && ids.length) await supabase.from('ai_queries').delete().eq('user_id', user.id).in('id', ids)
   }
 
-  return <section className="resolver-shell">
-    <div className="resolver-hero"><span className="resolver-kicker">Nexo IA · Resolver</span><h2>¿Qué quieres resolver?</h2><p>Escribe el ejercicio o adjunta hasta {imageLimits.maxImages} imágenes. Nexo puede relacionarlas como partes del mismo caso, ejercicio o práctica.</p></div>
+  const stages = category === 'Matemáticas'
+    ? ['Pensando en el procedimiento…', 'Calculando paso a paso…', 'Comprobando el resultado…']
+    : ['Pensando en tu pregunta…', 'Relacionando los conceptos…', 'Preparando una explicación clara…']
 
-    <div className="subject-tabs">{categories.map(item => <button key={item} className={`subject-tab ${category === item ? 'active' : ''}`} onClick={() => setCategory(item)}>{item}</button>)}</div>
-
-    <div className="resolver-card">
-      <input ref={inputRef} id="resolver-images-react" hidden multiple type="file" accept="image/png,image/jpeg,image/webp" onChange={event => importImages(Array.from(event.target.files || []))}/>
-      <div
-        className={`resolver-drop ${images.length ? 'has-images' : ''} ${dragging ? 'dragging' : ''}`}
-        onDragEnter={event => { event.preventDefault(); setDragging(true) }}
-        onDragOver={event => event.preventDefault()}
-        onDragLeave={event => { if (event.currentTarget === event.target) setDragging(false) }}
-        onDrop={event => { event.preventDefault(); setDragging(false); importImages(Array.from(event.dataTransfer.files).filter(file => file.type.startsWith('image/'))) }}
-      >
-        {images.length === 0 ? <label className="resolver-empty-drop" htmlFor="resolver-images-react"><span className="drop-icon">＋</span><div><strong>{imageBusy ? 'Preparando imágenes…' : 'Añadir imágenes del ejercicio'}</strong><span>Arrastra, pega o selecciona PNG, JPG o WEBP</span></div></label> : <div className="attachment-grid">
-          {images.map((image, index) => <div className="attachment-tile" key={image.id}><img src={image.dataUrl} alt={`Adjunto ${index + 1}`}/><span className="attachment-index">{index + 1}</span><button type="button" onClick={() => setImages(current => current.filter(item => item.id !== image.id))} aria-label={`Quitar ${image.name}`}>×</button><small title={image.name}>{image.name}</small></div>)}
-          {images.length < imageLimits.maxImages && <label className="attachment-add" htmlFor="resolver-images-react"><b>＋</b><span>Agregar otra</span></label>}
-        </div>}
+  return <section className="solver-shell">
+    <div className="solver-heading"><div><p className="eyebrow">Nexo IA · Resolver</p><h2>Una conversación para entenderlo.</h2><p>Pregunta, adjunta imágenes y sigue profundizando en la misma conversación.</p></div><div className="solver-heading-actions">{activeThread && <button className="secondary" onClick={startNew} disabled={busy}>＋ Nuevo chat</button>}{feedback}</div></div>
+    <div className={`solver-layout ${threads.length ? 'has-history' : 'no-history'}`}>
+      {threads.length > 0 && <aside className="solver-history" aria-label="Conversaciones recientes"><div className="solver-history-head"><strong>Conversaciones</strong><button onClick={clearHistory} disabled={busy}>Limpiar</button></div><div className="solver-thread-list">{threads.slice(0, 25).map(thread => <button key={thread.id} className={activeId === thread.id ? 'active' : ''} onClick={() => openThread(thread)} disabled={busy}><span>✦</span><span><strong>{thread.title}</strong><small>{thread.category} · {thread.messages.filter(message => message.role === 'assistant').length} respuestas</small></span></button>)}</div></aside>}
+      <div className="solver-chat"><div className="solver-messages" ref={messageListRef} aria-label="Conversación con Nexo IA">
+        {activeThread?.messages.length ? activeThread.messages.map(message => message.role === 'user'
+          ? <div className="solver-turn user" key={message.id}><div className="solver-user-bubble"><p>{message.text}</p>{Boolean(message.imageCount) && <small>📎 {message.imageCount} {message.imageCount === 1 ? 'imagen' : 'imágenes'}</small>}</div></div>
+          : <div className="solver-turn assistant" key={message.id}><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-assistant-bubble"><div className="solver-message-head"><strong>Nexo IA</strong><button onClick={() => copyAnswer(message)}>{copiedId === message.id ? '✓ Copiado' : 'Copiar'}</button></div><div className="solver-answer"><ResponseRenderer text={message.text}/></div></div></div>)
+          : <div className="solver-empty"><span>✦</span><h3>¿Por dónde empezamos?</h3><p>Escribe una duda o adjunta una imagen. Después puedes seguir preguntando sin perder el contexto.</p><div className="solver-prompts">{(suggestions[category] || suggestions.General).map(suggestion => <button key={suggestion} onClick={() => { setQuestion(suggestion); textareaRef.current?.focus() }}>{suggestion} ↗</button>)}</div></div>}
+        {busy && <div className="solver-turn assistant solver-thinking" role="status"><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-thinking-bubble"><span className="solver-thinking-dots" aria-hidden="true"><i/><i/><i/></span><strong>{stages[thinkingStage]}</strong><small>Nexo está preparando tu respuesta</small></div></div>}
+        {error && <div className="solver-error" role="alert"><span>{error}</span>{failedRequest && <button onClick={() => void requestAnswer(failedRequest)}>Reintentar</button>}</div>}
       </div>
-
-      <div className="resolver-compose">
-        <textarea
-          rows={4}
-          placeholder="Escribe tu pregunta aquí…"
-          value={question}
-          onChange={event => setQuestion(event.target.value)}
-          onPaste={event => {
-            const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/'))
-            if (files.length) { event.preventDefault(); importImages(files) }
-          }}
-          onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); solve() } }}
-        />
-        {!question && images.length === 0 && <div className="prompt-suggestions">{currentSuggestions.map(suggestion => <button key={suggestion} onClick={() => setQuestion(suggestion)}>{suggestion}</button>)}</div>}
-        <div className="resolver-controls"><label className="deep-toggle"><input type="checkbox" checked={deep} onChange={event => setDeep(event.target.checked)}/><span></span><b>Razonamiento reforzado</b></label><div className="resolver-right"><span className="nexo-engine-pill"><i></i>Nexo IA</span><button className="solve-button" onClick={() => solve()} disabled={busy || imageBusy} aria-label="Resolver">{busy ? <span className="mini-spinner"/> : '↑'}</button></div></div>
-      </div>
-      {images.length > 0 && <div className="attachment-summary"><span>{images.length}/{imageLimits.maxImages} imágenes</span><span>Se comprimen automáticamente antes de enviarse</span></div>}
-      {error && <div className="resolver-error">{error}</div>}
+      <div className={`solver-composer ${dragging ? 'dragging' : ''}`} onDragEnter={event => { event.preventDefault(); setDragging(true) }} onDragOver={event => event.preventDefault()} onDragLeave={event => { if (event.currentTarget === event.target) setDragging(false) }} onDrop={event => { event.preventDefault(); setDragging(false); void importImages(Array.from(event.dataTransfer.files).filter(file => file.type.startsWith('image/'))) }}>
+        <div className="solver-categories" role="group" aria-label="Materia">{categories.map(item => <button key={item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)} disabled={busy}>{item}</button>)}</div>
+        <input ref={fileRef} hidden multiple type="file" accept="image/png,image/jpeg,image/webp" onChange={event => void importImages(Array.from(event.target.files || []))}/>
+        {images.length > 0 && <div className="solver-attachments">{images.map((image, index) => <div key={image.id}><img src={image.dataUrl} alt={`Adjunto ${index + 1}`}/><button aria-label={`Quitar ${image.name}`} onClick={() => setImages(current => current.filter(item => item.id !== image.id))}>×</button></div>)}<small>{images.length}/{imageLimits.maxImages} imágenes</small></div>}
+        <textarea ref={textareaRef} aria-label="Escribe tu pregunta" rows={3} placeholder="Pregunta lo que quieras resolver…" value={question} onChange={event => setQuestion(event.target.value)} onPaste={event => { const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/')); if (files.length) { event.preventDefault(); void importImages(files) } }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send() } }}/>
+        <div className="solver-compose-actions"><button className="solver-attach" onClick={() => fileRef.current?.click()} disabled={busy || imageBusy || images.length >= imageLimits.maxImages} aria-label="Adjuntar imágenes">📎 <span>{imageBusy ? 'Preparando…' : 'Adjuntar imágenes'}</span></button><label className="deep-toggle"><input type="checkbox" checked={deep} onChange={event => setDeep(event.target.checked)} disabled={busy}/><span/><b>Razonamiento reforzado</b></label><button className="solver-send" onClick={send} disabled={busy || imageBusy || (!question.trim() && images.length === 0)} aria-label="Enviar pregunta">{busy ? '···' : '↑'}</button></div>
+      </div></div>
     </div>
-
-    {busy && !answer && <div className="thinking-card"><span className="thinking-orb">✦</span><div><strong>Nexo está analizando…</strong><p>{deep ? 'Usando razonamiento reforzado para revisar mejor el problema.' : images.length > 1 ? `Relacionando la información de ${images.length} imágenes.` : 'Identificando datos, conceptos y la forma más útil de responder.'}</p></div></div>}
-
-    {answer && <article className="answer-card enhanced-answer">
-      <div className="answer-head"><div><span>✦</span><strong>Respuesta de Nexo</strong><em>Nexo IA</em></div><div className="answer-actions"><button onClick={copyAnswer}>{copied ? '✓ Copiado' : 'Copiar'}</button><button onClick={() => solve({ question: lastQuestion, keepImages: true })} disabled={busy || (lastImageCount > 0 && images.length === 0)} title={lastImageCount > 0 && images.length === 0 ? 'Las imágenes originales no se guardan en el historial' : undefined}>Reintentar</button></div></div>
-      <div className="answer-text"><ResponseRenderer text={answer}/></div>
-      <div className="follow-up-box"><span>↳</span><textarea rows={2} value={followUp} onChange={event => setFollowUp(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); askFollowUp() } }} placeholder="Pregunta algo sobre esta respuesta…"/><button onClick={askFollowUp} disabled={!followUp.trim() || busy}>Enviar</button></div>
-    </article>}
-
-    {history.length > 0 && <section className="resolver-history"><div className="section-head"><div><p className="eyebrow">Tu cuenta</p><h3>Consultas recientes</h3></div><button className="text-button" onClick={clearHistory}>Limpiar</button></div><div className="history-grid">{history.slice(0, 6).map((item, index) => <button key={item.id || `${item.createdAt}-${index}`} className="history-item" onClick={() => { setAnswer(item.answer); setLastQuestion(item.question); setLastImageCount(item.imageCount); setImages([]); setQuestion(item.question); setCategory(item.category); setDeep(Boolean(item.deep)); window.scrollTo({ top: 0, behavior: 'smooth' }) }}><span>{item.category}{item.imageCount ? ` · ${item.imageCount} img` : ''}</span><strong>{item.question}</strong><small>{new Date(item.createdAt).toLocaleString('es-PE')}</small></button>)}</div></section>}
   </section>
 }

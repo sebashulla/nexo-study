@@ -12,7 +12,7 @@ const types: { value: FeedbackType; icon: string; label: string }[] = [
   { value: 'other', icon: '💬', label: 'Otro' },
 ]
 
-export function FeedbackWidget({ context }: { context: string }) {
+export function FeedbackWidget({ context, inline = false }: { context: string; inline?: boolean }) {
   const { user } = useAuth()
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState<FeedbackType>('idea')
@@ -55,7 +55,7 @@ export function FeedbackWidget({ context }: { context: string }) {
   }
 
   return <>
-    <button className="feedback-fab" onClick={event => { event.currentTarget.focus(); setOpen(true) }} aria-label="Enviar retroalimentación"><span>💬</span><b>Feedback</b></button>
+    <button className={`feedback-fab ${inline ? 'inline-feedback' : ''}`} onClick={event => { event.currentTarget.focus(); setOpen(true) }} aria-label="Enviar retroalimentación"><span>💬</span><b>Feedback</b></button>
     {open && <Dialog title="Ayúdanos a mejorar Nexo" className="feedback-modal" onClose={close}>
         <button className="feedback-close" onClick={close} aria-label="Cerrar">×</button>
         {!sent ? <>

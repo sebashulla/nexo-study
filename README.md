@@ -16,7 +16,7 @@ V0.8 convierte la zona de estudio en una navegación real por rutas y conecta lo
   - resumen de ideas clave,
   - palabras/conceptos importantes,
   - hasta 12 flashcards,
-  - hasta 10 preguntas de quiz/simulacro,
+  - hasta 10 preguntas para un quiz de práctica,
   - referencias de página cuando el texto extraído permite identificarlas.
 - Antes de generar, el estudiante puede indicar el enfoque: equilibrado, comprender, memorizar o examen.
 - También puede indicar nivel: esencial, universitario o avanzado.
@@ -67,7 +67,7 @@ La migración 006 exige que la cuenta `@sebasshulla` ya exista. Si no existe exa
 
 La pestaña fija del borde derecho abre el explorador de espacios. **General** contiene los cursos sin carpeta; cada espacio creado contiene únicamente los cursos asignados allí. Inicio, Mis cursos y Progreso muestran el contenido del espacio activo. Los cursos nuevos se crean dentro de ese espacio y los enlaces directos a un curso activan automáticamente el espacio que le corresponde.
 
-En el explorador puedes crear un espacio, traer cursos existentes, moverlos entre carpetas o eliminar un espacio. Al eliminarlo, sus cursos regresan a General. Cada material se estudia dentro de su curso, con resumen, flashcards, quiz, simulacro y tutor en la misma vista. El avance se calcula a partir de resúmenes abiertos, tarjetas reveladas y preguntas respondidas; sigue al curso cuando se mueve. El historial visible de Resolver también se guarda por espacio en este navegador.
+En el explorador puedes crear un espacio, traer cursos existentes, moverlos entre carpetas o eliminar un espacio. Al eliminarlo, sus cursos regresan a General. Cada material se estudia dentro de su curso, con resumen, flashcards, un quiz de práctica y tutor en la misma vista. El avance se calcula a partir de resúmenes abiertos, tarjetas reveladas y preguntas respondidas; sigue al curso cuando se mueve. Resolver funciona como un chat con conversaciones y preguntas de seguimiento guardadas por espacio en este navegador.
 
 Como cursos y avance siguen siendo locales al navegador, cambiar de dispositivo no sincroniza estos datos todavía.
 

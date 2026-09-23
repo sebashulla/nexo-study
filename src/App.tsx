@@ -24,7 +24,7 @@ import { loadStudyActivity, saveStudyActivity, workspaceProgress, type MaterialA
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { ProgressPage } from './ProgressPage'
 
-type StudyMode = 'summary' | 'flashcards' | 'quiz' | 'exam' | 'tutor'
+type StudyMode = 'summary' | 'flashcards' | 'quiz' | 'tutor'
 
 const uid = () => Math.random().toString(36).slice(2, 9)
 const STORAGE_PREFIX = 'nexo-study-courses-v5:'
@@ -104,7 +104,6 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [flashIndex, setFlashIndex] = useState(0)
   const [flashRevealed, setFlashRevealed] = useState(false)
   const [quizAnswers, setQuizAnswers] = useState<Record<number, number>>({})
-  const [examAnswers, setExamAnswers] = useState<Record<number, number>>({})
   const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [showWorkspaceDrawer, setShowWorkspaceDrawer] = useState(() => window.location.pathname === '/folders')
   const [signingOut, setSigningOut] = useState(false)
@@ -180,7 +179,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     ? (route.materialId ? activeCourse.materials.find(material => material.id === route.materialId) : (activeCourse.materials.find(material => material.id === activeMaterialId) ?? activeCourse.materials[0]))
     : undefined
 
-  useEffect(() => { setQuizAnswers({}); setExamAnswers({}); setFlashIndex(0); setFlashRevealed(false) }, [activeMaterial?.id])
+  useEffect(() => { setQuizAnswers({}); setFlashIndex(0); setFlashRevealed(false) }, [activeMaterial?.id])
 
   useEffect(() => {
     if (route.materialId && studyMode === 'summary' && activeMaterial && !activity[activeMaterial.id]?.summaryViewed) {
@@ -194,13 +193,11 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   }, [activeCourseId, activeCourse, activeMaterialId])
 
   const pack: StudyPack | null = useMemo(() => activeMaterial?.text ? (activeMaterial.studyPack || generateStudyPack(activeMaterial.text, 10)) : null, [activeMaterial])
-  const quickPack: StudyPack | null = useMemo(() => pack ? { ...pack, quiz: pack.quiz.slice(0, 5) } : null, [pack])
-  const examPack: StudyPack | null = pack
   const totalMaterials = workspaceCourses.reduce((acc, course) => acc + course.materials.length, 0)
   const aiPreparedMaterials = workspaceCourses.reduce((acc, course) => acc + course.materials.filter(m => m.studyPackMeta?.source === 'nexo-ai').length, 0)
   const currentProgress = workspaceProgress(workspaceCourses, activity)
 
-  const resetStudy = () => { setQuizAnswers({}); setExamAnswers({}); setFlashIndex(0); setFlashRevealed(false) }
+  const resetStudy = () => { setQuizAnswers({}); setFlashIndex(0); setFlashRevealed(false) }
 
   const updateMaterial = (courseId: string, materialId: string, updater: (material: Material) => Material) => {
     setCourses(current => current.map(course => course.id !== courseId ? course : {
@@ -367,19 +364,18 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
           </> : <EmptyState title="Curso no encontrado" text="Este curso no existe en este dispositivo." action="Volver a cursos" onClick={() => navigate('/courses')} />}
         </section>}
 
-        {tab === 'resolver' && <ResolverPage key={workspaces.selectedId} workspaceId={workspaces.selectedId} />}
+        {tab === 'resolver' && <ResolverPage key={workspaces.selectedId} workspaceId={workspaces.selectedId} feedback={<FeedbackWidget context={pathname} inline />} />}
         {tab === 'corrector' && <CorrectorPage key={workspaces.selectedId} />}
 
         {tab === 'cursos' && route.materialId && <section className="course-study-page"><div className="course-study-context"><div><p className="eyebrow">Dentro de {activeCourse?.name ?? 'tu curso'}</p><h2>Estudia este material</h2></div><button className="secondary" onClick={() => activeCourse && navigate(coursePath(activeCourse.id))}>← Ver todos los materiales</button></div><div className="study-layout">
           <aside className="panel material-nav"><div className="section-head compact"><div><p className="eyebrow">Material</p><h3>{activeCourse?.name ?? 'Curso'}</h3></div></div>{activeCourse?.materials.map(material => <button key={material.id} className={`material-nav-item ${activeMaterial?.id === material.id ? 'active' : ''}`} onClick={() => openMaterial(activeCourse.id, material.id)}><span>{material.sourceType === 'pdf' ? 'P' : '≡'}</span><div><strong>{material.title}</strong><small>{material.studyPackMeta?.source === 'nexo-ai' ? '✦ Preparado por Nexo IA' : material.pages?.length ? `${material.pages.length} páginas` : `${material.text.length} caracteres`}</small></div></button>)}<button className="secondary full" onClick={() => setShowMaterialForm(true)}>+ Agregar material</button></aside>
-          <div className="panel study-stage">{pack && quickPack && examPack && activeMaterial ? <>
-            <div className="study-heading"><div><p className="eyebrow">Sesión de estudio</p><h2>{activeMaterial.title}</h2>{activeMaterial.sourceName && <small className="source-line">{activeMaterial.sourceType === 'pdf' ? '📄' : '📝'} {activeMaterial.sourceName}</small>}</div><div className="study-heading-actions"><button className="secondary ai-regenerate" disabled={aiGeneratingMaterialId === activeMaterial.id} onClick={regenerateActiveMaterial}>{aiGeneratingMaterialId === activeMaterial.id ? '✦ Preparando…' : '✦ Regenerar con Nexo IA'}</button><div className="mode-tabs"><button className={studyMode === 'summary' ? 'active' : ''} onClick={() => setStudyMode('summary')}>Resumen</button><button className={studyMode === 'flashcards' ? 'active' : ''} onClick={() => setStudyMode('flashcards')}>Flashcards</button><button className={studyMode === 'quiz' ? 'active' : ''} onClick={() => setStudyMode('quiz')}>Quiz</button><button className={studyMode === 'exam' ? 'active' : ''} onClick={() => setStudyMode('exam')}>Simulacro</button><button className={studyMode === 'tutor' ? 'active' : ''} onClick={() => setStudyMode('tutor')}>Tutor</button></div></div></div>
+          <div className="panel study-stage">{pack && activeMaterial ? <>
+            <div className="study-heading"><div><p className="eyebrow">Sesión de estudio</p><h2>{activeMaterial.title}</h2>{activeMaterial.sourceName && <small className="source-line">{activeMaterial.sourceType === 'pdf' ? '📄' : '📝'} {activeMaterial.sourceName}</small>}</div><div className="study-heading-actions"><button className="secondary ai-regenerate" disabled={aiGeneratingMaterialId === activeMaterial.id} onClick={regenerateActiveMaterial}>{aiGeneratingMaterialId === activeMaterial.id ? '✦ Preparando…' : '✦ Regenerar con Nexo IA'}</button><div className="mode-tabs"><button className={studyMode === 'summary' ? 'active' : ''} onClick={() => setStudyMode('summary')}>Resumen</button><button className={studyMode === 'flashcards' ? 'active' : ''} onClick={() => setStudyMode('flashcards')}>Flashcards</button><button className={studyMode === 'quiz' ? 'active' : ''} onClick={() => setStudyMode('quiz')}>Quiz</button><button className={studyMode === 'tutor' ? 'active' : ''} onClick={() => setStudyMode('tutor')}>Tutor</button></div></div></div>
             {aiGeneratingMaterialId === activeMaterial.id && <StudyGenerationBanner material={activeMaterial} />}
             {aiGenerationErrors[activeMaterial.id] && <div className="study-ai-error"><div><strong>No pude completar la preparación con IA.</strong><p>{aiGenerationErrors[activeMaterial.id]} Puedes seguir estudiando con el paquete local o intentarlo otra vez.</p></div><button className="secondary" onClick={regenerateActiveMaterial}>Reintentar</button></div>}
             {studyMode === 'summary' && <SummaryView pack={pack} material={activeMaterial} />}
             {studyMode === 'flashcards' && <FlashcardView pack={pack} index={flashIndex} revealed={flashRevealed} setIndex={setFlashIndex} setRevealed={setFlashRevealed} onReveal={index => recordActivity(activeMaterial.id, value => ({ ...value, flashcardsSeen: [...new Set([...(value.flashcardsSeen ?? []), index])] }))} />}
-            {studyMode === 'quiz' && <QuizView pack={quickPack} answers={quizAnswers} setAnswers={setQuizAnswers} title="Quiz rápido" onAnswer={(index, correct) => recordActivity(activeMaterial.id, value => ({ ...value, answers: { ...value.answers, [`quiz:${index}`]: correct } }))} />}
-            {studyMode === 'exam' && <QuizView pack={examPack} answers={examAnswers} setAnswers={setExamAnswers} title="Simulacro del material" exam onAnswer={(index, correct) => recordActivity(activeMaterial.id, value => ({ ...value, answers: { ...value.answers, [`exam:${index}`]: correct } }))} />}
+            {studyMode === 'quiz' && <QuizView pack={pack} answers={quizAnswers} setAnswers={setQuizAnswers} onAnswer={(index, correct) => recordActivity(activeMaterial.id, value => ({ ...value, answers: { ...value.answers, [`quiz:${index}`]: correct } }))} />}
             {studyMode === 'tutor' && <TutorView key={activeMaterial.id} material={activeMaterial} />}
           </> : <EmptyState title="No hay material seleccionado" text="Entra a un curso y agrega un PDF para crear una sesión de estudio." action="Ver cursos" onClick={() => navigate('/courses')} />}</div>
         </div></section>}
@@ -398,7 +394,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
       {showCourseForm && <Modal title={`Nuevo curso · ${workspaces.selectedWorkspace.name}`} onClose={() => setShowCourseForm(false)}><div className="course-emoji-preview"><span>{courseEmoji}</span><div><strong>Un curso para {workspaces.selectedWorkspace.name}</strong><small>Quedará dentro de este espacio y su avance se medirá aquí.</small></div></div><div className="course-emoji-picker">{['📘','🧠','🧪','🩺','🦷','📐','⚛️','💻','📚','🌎','⚖️','💹','🧬','🔬','🎨','🎯'].map(emoji => <button key={emoji} className={courseEmoji === emoji ? 'active' : ''} onClick={() => setCourseEmoji(emoji)}>{emoji}</button>)}</div><label>Nombre del curso<input autoFocus value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Ej. Histología" onKeyDown={e => e.key === 'Enter' && addCourse()} /></label>{courseError && <div role="alert" className="auth-alert error">{courseError}</div>}<div className="modal-actions"><button className="secondary" onClick={() => setShowCourseForm(false)}>Cancelar</button><button className="primary" disabled={courseBusy || !courseName.trim()} onClick={addCourse}>{courseBusy ? 'Creando…' : 'Crear curso'}</button></div></Modal>}
 
       {showMaterialForm && <Modal title={`Agregar material${activeCourse ? ` · ${activeCourse.name}` : ''}`} onClose={() => { setShowMaterialForm(false); resetMaterialForm() }} wide>{!activeCourse ? <p>Primero crea un curso.</p> : <><div className="upload-box"><input id="file-upload" type="file" accept=".txt,.md,.pdf" onChange={e => importFile(e.target.files?.[0])}/><label htmlFor="file-upload"><span>↑</span><strong>Subir PDF, TXT o MD</strong><small>Los PDF se leen por páginas. Al guardarlos Nexo IA prepara automáticamente tu sesión.</small></label></div>{importStatus && <div className={`import-status ${importStatus.startsWith('⚠') ? 'error' : ''}`}>{importStatus}</div>}<label>Título<input value={materialTitle} onChange={e => setMaterialTitle(e.target.value)} placeholder="Ej. Clase 04 — Patología oral" /></label><label>Texto extraído / apuntes<textarea rows={7} value={materialText} onChange={e => { setMaterialText(e.target.value); if (!sourceName) setSourceType('text') }} placeholder="También puedes pegar aquí tus apuntes directamente…" /></label>{sourceType === 'pdf' && <div className="study-profile-box"><div><p className="eyebrow">Ayuda a Nexo IA</p><h3>¿Cómo quieres estudiar este PDF?</h3><p>Esta guía cambia el tipo de flashcards y preguntas que se generan.</p></div><div className="study-focus-grid">{studyFocusOptions.map(option => <button key={option.value} className={studyFocus === option.value ? 'active' : ''} onClick={() => setStudyFocus(option.value)}><span>{option.icon}</span><div><strong>{option.label}</strong><small>{option.hint}</small></div></button>)}</div><div className="study-level-row"><span>Nivel</span>{studyLevelOptions.map(option => <button key={option.value} className={studyLevel === option.value ? 'active' : ''} onClick={() => setStudyLevel(option.value)}>{option.label}</button>)}</div></div>}<div className="modal-actions"><button className="secondary" onClick={() => { setShowMaterialForm(false); resetMaterialForm() }}>Cancelar</button><button className="primary" disabled={!materialTitle.trim() || !materialText.trim()} onClick={addMaterial}>{sourceType === 'pdf' ? 'Guardar y preparar con Nexo IA' : 'Guardar y estudiar'}</button></div></>}</Modal>}
-      <FeedbackWidget context={pathname} />
+      {tab !== 'resolver' && <FeedbackWidget context={pathname} />}
     </div>
   )
 }
@@ -424,10 +420,10 @@ function FlashcardView({ pack, index, revealed, setIndex, setRevealed, onReveal 
   return <div className="flash-wrap"><p className="counter">Tarjeta {safeIndex + 1} de {pack.flashcards.length}{card.sourcePage ? ` · Página ${card.sourcePage}` : ''}</p><button className={`flashcard ${revealed ? 'revealed' : ''}`} onClick={() => { if (!revealed) onReveal(safeIndex); setRevealed(!revealed) }}><small>{revealed ? 'RESPUESTA' : 'PREGUNTA'}</small><strong>{revealed ? card.back : card.front}</strong><span>{revealed ? 'Toca para volver' : 'Toca para revelar'}</span></button><div className="flash-controls"><button className="secondary" onClick={() => move(-1)}>← Anterior</button><button className="primary" onClick={() => move(1)}>Siguiente →</button></div></div>
 }
 
-function QuizView({ pack, answers, setAnswers, title, exam = false, onAnswer }: { pack: StudyPack; answers: Record<number, number>; setAnswers: (value: Record<number, number>) => void; title: string; exam?: boolean; onAnswer: (index: number, correct: boolean) => void }) {
+function QuizView({ pack, answers, setAnswers, onAnswer }: { pack: StudyPack; answers: Record<number, number>; setAnswers: (value: Record<number, number>) => void; onAnswer: (index: number, correct: boolean) => void }) {
   const answered = Object.keys(answers).length
   const correct = Object.entries(answers).filter(([i, a]) => pack.quiz[Number(i)]?.answer === a).length
-  return <div className="quiz-list"><div className="quiz-toolbar"><div><p className="eyebrow">{exam ? 'Modo examen' : 'Práctica'}</p><h3>{title}</h3></div><div className="score-chip">{answered}/{pack.quiz.length} · {answered ? Math.round(correct / answered * 100) : 0}%</div></div>{pack.quiz.map((question, qi) => { const selected = answers[qi]; const done = selected !== undefined; return <article className="quiz-card" key={qi}><div className="question-number">Pregunta {qi + 1}{question.sourcePage ? ` · pág. ${question.sourcePage}` : ''}</div><h3>{question.question}</h3><div className="options">{question.options.map((option, oi) => { const ok = done && oi === question.answer; const wrong = done && oi === selected && oi !== question.answer; return <button disabled={done} className={`${ok ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} key={oi} onClick={() => { onAnswer(qi, oi === question.answer); setAnswers({ ...answers, [qi]: oi }) }}><span>{String.fromCharCode(65 + oi)}</span>{option}</button> })}</div>{done && <div className={`feedback ${selected === question.answer ? 'ok' : 'no'}`}><strong>{selected === question.answer ? '✓ Correcto' : '✕ Revisa esta idea'}</strong><p>{question.explanation}</p></div>}</article>})}</div>
+  return <div className="quiz-list"><div className="quiz-toolbar"><div><p className="eyebrow">Práctica a tu ritmo</p><h3>Quiz del material</h3></div><div className="quiz-toolbar-actions"><div className="score-chip">{answered}/{pack.quiz.length} · {answered ? Math.round(correct / answered * 100) : 0}%</div>{answered > 0 && <button className="secondary quiz-reset" onClick={() => setAnswers({})}>Practicar de nuevo</button>}</div></div>{pack.quiz.map((question, qi) => { const selected = answers[qi]; const done = selected !== undefined; return <article className="quiz-card" key={qi}><div className="question-number">Pregunta {qi + 1}{question.sourcePage ? ` · pág. ${question.sourcePage}` : ''}</div><h3>{question.question}</h3><div className="options">{question.options.map((option, oi) => { const ok = done && oi === question.answer; const wrong = done && oi === selected && oi !== question.answer; return <button disabled={done} className={`${ok ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} key={oi} onClick={() => { onAnswer(qi, oi === question.answer); setAnswers({ ...answers, [qi]: oi }) }}><span>{String.fromCharCode(65 + oi)}</span>{option}</button> })}</div>{done && <div className={`feedback ${selected === question.answer ? 'ok' : 'no'}`}><strong>{selected === question.answer ? '✓ Correcto' : '✕ Revisa esta idea'}</strong><p>{question.explanation}</p></div>}</article>})}</div>
 }
 
 function TutorView({ material }: { material: Material }) {
