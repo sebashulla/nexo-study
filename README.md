@@ -63,7 +63,15 @@ La migración 006 exige que la cuenta `@sebasshulla` ya exista. Si no existe exa
 5. El frontend valida el resultado antes de usarlo.
 6. El paquete queda guardado dentro del material en el almacenamiento local actual.
 
-> Los cursos/materiales todavía están en `localStorage`. Una próxima migración puede llevarlos a Supabase para sincronización completa entre dispositivos. La cuenta, carpetas, historial, feedback y administración ya usan Supabase.
+> Los cursos, materiales y el avance de estudio todavía están en `localStorage`. Una próxima migración puede llevarlos a Supabase para sincronización completa entre dispositivos. La cuenta, la definición de espacios y la pertenencia de cursos a cada espacio usan Supabase.
+
+## Espacios de estudio
+
+El selector de la derecha activa un solo espacio a la vez. **General** contiene los cursos sin carpeta; cada espacio creado contiene únicamente los cursos asignados allí. Inicio, Mis cursos, Estudiar y Progreso muestran el contenido del espacio activo. Los cursos nuevos se crean dentro de ese espacio y los enlaces directos a un curso activan automáticamente el espacio que le corresponde.
+
+En **Espacios** puedes crear uno, traer cursos existentes, moverlos entre espacios o eliminar un espacio. Al eliminarlo, sus cursos regresan a General. El avance se calcula a partir de resúmenes abiertos, tarjetas reveladas y preguntas respondidas; sigue al curso cuando se mueve. El historial visible de Resolver también se guarda por espacio en este navegador.
+
+Como cursos y avance siguen siendo locales al navegador, cambiar de dispositivo no sincroniza estos datos todavía.
 
 ## Consola privada de feedback
 

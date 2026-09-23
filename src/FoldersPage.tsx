@@ -1,100 +1,76 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Course } from './types'
-import { useAuth } from './auth/AuthContext'
-import { supabase } from './lib/supabase'
-
-type StudyFolder = {
-  id: string
-  name: string
-  emoji: string
-  created_at: string
-}
-
-type Membership = { folder_id: string; course_key: string }
+import type { StudyActivity } from './lib/studyProgress'
+import { workspaceProgress } from './lib/studyProgress'
+import { coursesInWorkspace, GENERAL_WORKSPACE, type StudyWorkspace, type WorkspaceMembership } from './lib/workspaces'
 
 const folderEmojis = ['📁', '🎓', '🧠', '🧪', '🩺', '📐', '📚', '⚙️', '🌟', '🎯']
 
-export function FoldersPage({ courses, onOpenCourse }: { courses: Course[]; onOpenCourse: (id: string) => void }) {
-  const { user } = useAuth()
-  const [folders, setFolders] = useState<StudyFolder[]>([])
-  const [memberships, setMemberships] = useState<Membership[]>([])
-  const [activeFolder, setActiveFolder] = useState<string>('all')
+export function FoldersPage({ allCourses, folders, memberships, selected, activity, onSelect, onCreate, onMove, onDelete, onOpenCourse }: {
+  allCourses: Course[]
+  folders: StudyWorkspace[]
+  memberships: WorkspaceMembership[]
+  selected: StudyWorkspace
+  activity: StudyActivity
+  onSelect: (id: string) => void
+  onCreate: (name: string, emoji: string) => Promise<unknown>
+  onMove: (courseId: string, workspaceId: string) => Promise<void>
+  onDelete: (id: string) => Promise<void>
+  onOpenCourse: (id: string) => void
+}) {
   const [creating, setCreating] = useState(false)
+  const [bringing, setBringing] = useState(false)
   const [folderName, setFolderName] = useState('')
   const [folderEmoji, setFolderEmoji] = useState('📁')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const contentRef = useRef<HTMLDivElement>(null)
+  const workspaces = [{ id: GENERAL_WORKSPACE, name: 'General', emoji: '🏠', created_at: '' }, ...folders]
+  const visibleCourses = coursesInWorkspace(allCourses, memberships, selected.id)
+  const availableToBring = allCourses.filter(course => !visibleCourses.some(item => item.id === course.id))
 
-  useEffect(() => {
-    if (!user || !supabase) return
-    let cancelled = false
-    Promise.all([
-      supabase.from('study_folders').select('id,name,emoji,created_at').order('created_at', { ascending: true }),
-      supabase.from('folder_courses').select('folder_id,course_key'),
-    ]).then(([folderResult, membershipResult]) => {
-      if (cancelled) return
-      if (folderResult.error || membershipResult.error) {
-        setError('No pudimos cargar tus carpetas. Inténtalo de nuevo más tarde.')
-        return
-      }
-      setFolders(folderResult.data || [])
-      setMemberships(membershipResult.data || [])
-    })
-    return () => { cancelled = true }
-  }, [user])
-
-  const activeFolderData = folders.find(folder => folder.id === activeFolder)
-  const courseFolderMap = useMemo(() => new Map(memberships.map(item => [item.course_key, item.folder_id])), [memberships])
-  const visibleCourses = useMemo(() => activeFolder === 'all' ? courses : courses.filter(course => courseFolderMap.get(course.id) === activeFolder), [activeFolder, courses, courseFolderMap])
-
-  const createFolder = async () => {
-    if (!user || !supabase || !folderName.trim()) return
+  const create = async () => {
+    if (busy) return
     setBusy(true); setError('')
-    const { data, error: insertError } = await supabase.from('study_folders').insert({ user_id: user.id, name: folderName.trim(), emoji: folderEmoji }).select('id,name,emoji,created_at').single()
-    setBusy(false)
-    if (insertError || !data) return setError(insertError?.message || 'No se pudo crear la carpeta.')
-    setFolders(current => [...current, data])
-    setActiveFolder(data.id)
-    setFolderName(''); setFolderEmoji('📁'); setCreating(false)
+    try { await onCreate(folderName, folderEmoji); setFolderName(''); setFolderEmoji('📁'); setCreating(false) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo crear el espacio.') }
+    finally { setBusy(false) }
   }
 
-  const assignCourse = async (courseId: string) => {
-    if (!user || !supabase || activeFolder === 'all') return
-    const currentFolder = courseFolderMap.get(courseId)
-    setError('')
-    if (currentFolder === activeFolder) {
-      const { error: deleteError } = await supabase.from('folder_courses').delete().eq('user_id', user.id).eq('course_key', courseId)
-      if (deleteError) return setError(deleteError.message)
-      setMemberships(current => current.filter(item => item.course_key !== courseId))
-      return
-    }
-    const { error: upsertError } = await supabase.from('folder_courses').upsert({ user_id: user.id, folder_id: activeFolder, course_key: courseId }, { onConflict: 'user_id,course_key' })
-    if (upsertError) return setError(upsertError.message)
-    setMemberships(current => [...current.filter(item => item.course_key !== courseId), { folder_id: activeFolder, course_key: courseId }])
+  const move = async (courseId: string, workspaceId: string) => {
+    setBusy(true); setError('')
+    try { await onMove(courseId, workspaceId); setBringing(false); requestAnimationFrame(() => contentRef.current?.focus()) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo mover el curso.') }
+    finally { setBusy(false) }
   }
 
-  const deleteFolder = async () => {
-    if (!user || !supabase || !activeFolderData) return
-    if (!window.confirm(`¿Eliminar la carpeta “${activeFolderData.name}”? Los cursos no se eliminarán.`)) return
-    const { error: deleteError } = await supabase.from('study_folders').delete().eq('id', activeFolderData.id).eq('user_id', user.id)
-    if (deleteError) return setError(deleteError.message)
-    setFolders(current => current.filter(folder => folder.id !== activeFolderData.id))
-    setMemberships(current => current.filter(item => item.folder_id !== activeFolderData.id))
-    setActiveFolder('all')
+  const remove = async () => {
+    if (selected.id === GENERAL_WORKSPACE) return
+    if (!window.confirm(`¿Eliminar “${selected.name}”? Sus cursos y su avance pasarán a General.`)) return
+    setBusy(true); setError('')
+    try { await onDelete(selected.id); requestAnimationFrame(() => contentRef.current?.focus()) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudo eliminar el espacio.') }
+    finally { setBusy(false) }
   }
 
-  return <section className="folders-layout">
-    <aside className="panel folders-sidebar">
-      <div className="section-head"><div><p className="eyebrow">Organización</p><h3>Carpetas</h3></div><button className="icon-button" onClick={() => setCreating(value => !value)}>＋</button></div>
-      {creating && <div className="folder-create-box"><div className="folder-emoji-row">{folderEmojis.map(emoji => <button key={emoji} className={folderEmoji === emoji ? 'active' : ''} onClick={() => setFolderEmoji(emoji)}>{emoji}</button>)}</div><input autoFocus value={folderName} onChange={event => setFolderName(event.target.value)} placeholder="Ej. Ciclo 2" onKeyDown={event => event.key === 'Enter' && createFolder()}/><button className="primary small" onClick={createFolder} disabled={busy || !folderName.trim()}>{busy ? 'Creando…' : 'Crear carpeta'}</button></div>}
-      <div className="folder-list"><button className={`folder-list-item ${activeFolder === 'all' ? 'active' : ''}`} onClick={() => setActiveFolder('all')}><span>🗂️</span><div><strong>Todos los cursos</strong><small>{courses.length} en total</small></div></button>{folders.map(folder => { const count = memberships.filter(item => item.folder_id === folder.id).length; return <button key={folder.id} className={`folder-list-item ${activeFolder === folder.id ? 'active' : ''}`} onClick={() => setActiveFolder(folder.id)}><span>{folder.emoji}</span><div><strong>{folder.name}</strong><small>{count} curso{count === 1 ? '' : 's'}</small></div></button> })}</div>
-    </aside>
+  return <section className="spaces-page">
+    <div className="spaces-intro"><div><p className="eyebrow">Organiza a tu manera</p><h2>Espacios de estudio</h2><p>Cada espacio reúne sus cursos, materiales y progreso. Cambia de espacio desde el selector de arriba para entrar en ese mundo.</p></div><button className="primary" onClick={() => setCreating(value => !value)}>＋ Nuevo espacio</button></div>
 
-    <div className="panel folders-main">
-      <div className="section-head"><div><p className="eyebrow">{activeFolder === 'all' ? 'Tu biblioteca' : 'Carpeta activa'}</p><h2>{activeFolderData ? `${activeFolderData.emoji} ${activeFolderData.name}` : '🗂️ Todos los cursos'}</h2></div>{activeFolderData && <button className="danger-text" onClick={deleteFolder}>Eliminar carpeta</button>}</div>
-      {activeFolderData && <div className="folder-hint"><span>💡</span><p>Haz clic en el botón de carpeta de un curso para {visibleCourses.length ? 'quitarlo de aquí' : 'agregar cursos desde “Todos los cursos”'}.</p></div>}
-      {error && <div className="auth-alert error">{error}</div>}
-      {activeFolder === 'all' ? <div className="folder-course-grid">{courses.map(course => { const folder = folders.find(item => item.id === courseFolderMap.get(course.id)); return <article className="folder-course-card" key={course.id}><button className="folder-course-open" onClick={() => onOpenCourse(course.id)}><span className="folder-course-emoji">{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div></button><div className="folder-course-foot"><span>{folder ? `${folder.emoji} ${folder.name}` : 'Sin carpeta'}</span>{folders.length > 0 && <select value={courseFolderMap.get(course.id) || ''} onChange={async event => { const folderId = event.target.value; if (!user || !supabase) return; if (!folderId) { await supabase.from('folder_courses').delete().eq('user_id', user.id).eq('course_key', course.id); setMemberships(current => current.filter(item => item.course_key !== course.id)); return } const { error: upsertError } = await supabase.from('folder_courses').upsert({ user_id: user.id, folder_id: folderId, course_key: course.id }, { onConflict: 'user_id,course_key' }); if (!upsertError) setMemberships(current => [...current.filter(item => item.course_key !== course.id), { folder_id: folderId, course_key: course.id }]) }}><option value="">Sin carpeta</option>{folders.map(item => <option key={item.id} value={item.id}>{item.emoji} {item.name}</option>)}</select>}</div></article> })}</div> : <div className="folder-course-grid">{visibleCourses.length ? visibleCourses.map(course => <article className="folder-course-card" key={course.id}><button className="folder-course-open" onClick={() => onOpenCourse(course.id)}><span className="folder-course-emoji">{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div></button><button className="remove-from-folder" onClick={() => assignCourse(course.id)}>Quitar de la carpeta</button></article>) : <div className="folder-empty"><span>{activeFolderData?.emoji || '📁'}</span><h3>Esta carpeta está vacía</h3><p>Vuelve a “Todos los cursos” y asigna cursos desde el selector de carpeta.</p><button className="secondary" onClick={() => setActiveFolder('all')}>Ver todos los cursos</button></div>}</div>}
+    {creating && <div className="panel spaces-create"><div><p className="eyebrow">Nuevo espacio</p><h3>¿Cómo se llama este mundo?</h3></div><div className="folder-emoji-row">{folderEmojis.map(emoji => <button key={emoji} aria-label={`Emoji ${emoji}`} aria-pressed={folderEmoji === emoji} className={folderEmoji === emoji ? 'active' : ''} onClick={() => setFolderEmoji(emoji)}>{emoji}</button>)}</div><div className="spaces-create-actions"><input autoFocus maxLength={60} aria-label="Nombre del espacio" placeholder="Ej. Ciclo 2, Oposición, Proyecto final…" value={folderName} onChange={event => setFolderName(event.target.value)} onKeyDown={event => event.key === 'Enter' && create()}/><button className="primary" disabled={busy || !folderName.trim()} onClick={create}>{busy ? 'Creando…' : 'Crear espacio'}</button><button className="secondary" onClick={() => setCreating(false)}>Cancelar</button></div></div>}
+    {error && <div role="alert" className="auth-alert error">{error}</div>}
+
+    <div className="spaces-grid">{workspaces.map(workspace => {
+      const itsCourses = coursesInWorkspace(allCourses, memberships, workspace.id)
+      const progress = workspaceProgress(itsCourses, activity)
+      return <button key={workspace.id} className={`space-card ${selected.id === workspace.id ? 'active' : ''}`} onClick={() => { onSelect(workspace.id); setBringing(false) }} aria-current={selected.id === workspace.id ? 'true' : undefined}>
+        <span className="space-card-emoji">{workspace.emoji}</span><span className="space-card-copy"><strong>{workspace.name}</strong><small>{itsCourses.length} cursos · {progress.materials} materiales</small></span><span className="space-card-percent">{progress.percent}%</span><span className="space-card-track"><i style={{ width: `${progress.percent}%` }}/></span>
+      </button>
+    })}</div>
+
+    <div className="panel spaces-content" ref={contentRef} tabIndex={-1}><div className="section-head"><div><p className="eyebrow">Dentro de este espacio</p><h2>{selected.emoji} {selected.name}</h2><p className="spaces-content-subtitle">{visibleCourses.length} cursos · su material y progreso aparecen solo al entrar aquí.</p></div><div className="spaces-content-actions"><button className="secondary" onClick={() => setBringing(value => !value)}>↳ Traer curso</button>{selected.id !== GENERAL_WORKSPACE && <button className="danger-text" disabled={busy} onClick={remove}>Eliminar espacio</button>}</div></div>
+      {bringing && <div className="spaces-bring"><strong>Mover un curso a {selected.name}</strong>{availableToBring.length ? <div>{availableToBring.map(course => <button key={course.id} disabled={busy} onClick={() => move(course.id, selected.id)}>{course.emoji} {course.name}<span>Traer ↗</span></button>)}</div> : <p>Todos tus cursos ya están en este espacio.</p>}</div>}
+      {visibleCourses.length ? <div className="folder-course-grid">{visibleCourses.map(course => <article className="folder-course-card" key={course.id}><button className="folder-course-open" onClick={() => onOpenCourse(course.id)}><span className="folder-course-emoji">{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales · {workspaceProgress([course], activity).percent}% recorrido</small></div><span aria-hidden="true">↗</span></button><div className="folder-course-foot"><span>Mover a otro espacio</span><select aria-label={`Mover ${course.name} a otro espacio`} disabled={busy} value={selected.id} onChange={event => move(course.id, event.target.value)}>{workspaces.map(item => <option value={item.id} key={item.id}>{item.emoji} {item.name}</option>)}</select></div></article>)}</div>
+        : <div className="folder-empty"><span>{selected.emoji}</span><h3>Un espacio para empezar de nuevo</h3><p>Trae aquí un curso existente o crea uno desde “Mis cursos”. Lo que estudies en este espacio tendrá su propio avance.</p>{availableToBring.length > 0 && <button className="secondary" onClick={() => setBringing(true)}>Traer un curso</button>}</div>}
     </div>
   </section>
 }

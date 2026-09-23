@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { demoCourses } from './data/demo'
 import { extractPdf } from './lib/documentEngine'
 import { generateStudyPack } from './lib/studyEngine'
@@ -18,6 +18,11 @@ import { AdminFeedbackPage } from './AdminFeedbackPage'
 import { Dialog } from './Dialog'
 import { Icon } from './Icon'
 import { authErrorMessage } from './auth/authErrors'
+import { useWorkspaces } from './hooks/useWorkspaces'
+import { coursesInWorkspace, workspaceForCourse, GENERAL_WORKSPACE } from './lib/workspaces'
+import { loadStudyActivity, saveStudyActivity, workspaceProgress, type MaterialActivity, type StudyActivity } from './lib/studyProgress'
+import { WorkspaceSwitcher } from './WorkspaceSwitcher'
+import { ProgressPage } from './ProgressPage'
 
 type StudyMode = 'summary' | 'flashcards' | 'quiz' | 'exam' | 'tutor'
 
@@ -76,9 +81,20 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const route = useMemo(() => parseAppRoute(pathname), [pathname])
   const tab = route.tab
   const [courses, setCourses] = useState<Course[]>(() => loadInitialCourses(user.id))
+  const workspaces = useWorkspaces(user.id)
+  const [activity, setActivity] = useState<StudyActivity>(() => loadStudyActivity(user.id))
+  const workspaceCourses = useMemo(() => coursesInWorkspace(courses, workspaces.memberships, workspaces.selectedId), [courses, workspaces.memberships, workspaces.selectedId])
+  const workspaceCounts = useMemo(() => {
+    const counts: Record<string, number> = { [GENERAL_WORKSPACE]: 0 }
+    workspaces.folders.forEach(folder => { counts[folder.id] = 0 })
+    courses.forEach(course => { const id = workspaceForCourse(course.id, workspaces.memberships); counts[id] = (counts[id] ?? 0) + 1 })
+    return counts
+  }, [courses, workspaces.folders, workspaces.memberships])
   const [activeCourseId, setActiveCourseId] = useState(route.courseId || courses[0]?.id || '')
   const [activeMaterialId, setActiveMaterialId] = useState(route.materialId || courses[0]?.materials[0]?.id || '')
   const [showCourseForm, setShowCourseForm] = useState(false)
+  const [courseBusy, setCourseBusy] = useState(false)
+  const [courseError, setCourseError] = useState('')
   const [showMaterialForm, setShowMaterialForm] = useState(false)
   const [courseName, setCourseName] = useState('')
   const [courseEmoji, setCourseEmoji] = useState('📘')
@@ -126,6 +142,15 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   }, [courses, user.id])
 
   useEffect(() => {
+    try { saveStudyActivity(user.id, activity) }
+    catch { setStorageError('No pudimos guardar tu progreso en este navegador. Libera espacio de almacenamiento y vuelve a intentarlo.') }
+  }, [activity, user.id])
+
+  const recordActivity = useCallback((materialId: string, updater: (value: MaterialActivity) => MaterialActivity) => {
+    setActivity(current => ({ ...current, [materialId]: { ...updater(current[materialId] ?? {}), lastStudiedAt: new Date().toISOString() } }))
+  }, [])
+
+  useEffect(() => {
     if (!showAccountMenu) return
     const dismiss = (event: PointerEvent) => { if (!accountRef.current?.contains(event.target as Node)) setShowAccountMenu(false) }
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setShowAccountMenu(false); accountRef.current?.querySelector('button')?.focus() } }
@@ -145,13 +170,25 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     if (route.materialId) setActiveMaterialId(route.materialId)
   }, [route.courseId, route.materialId])
 
-  const selectedCourse = courses.find(course => course.id === activeCourseId)
-  const activeCourse = route.courseId ? courses.find(course => course.id === route.courseId) : (selectedCourse ?? courses[0])
+  useEffect(() => {
+    if (!workspaces.ready || !route.courseId) return
+    const owner = workspaceForCourse(route.courseId, workspaces.memberships)
+    if (courses.some(course => course.id === route.courseId) && workspaces.selectedId !== owner) workspaces.setSelectedId(owner)
+  }, [route.courseId, courses, workspaces.ready, workspaces.memberships, workspaces.selectedId])
+
+  const selectedCourse = workspaceCourses.find(course => course.id === activeCourseId)
+  const activeCourse = route.courseId ? workspaceCourses.find(course => course.id === route.courseId) : (selectedCourse ?? workspaceCourses[0])
   const activeMaterial = activeCourse
     ? (route.materialId ? activeCourse.materials.find(material => material.id === route.materialId) : (activeCourse.materials.find(material => material.id === activeMaterialId) ?? activeCourse.materials[0]))
     : undefined
 
   useEffect(() => { setQuizAnswers({}); setExamAnswers({}); setFlashIndex(0); setFlashRevealed(false) }, [activeMaterial?.id])
+
+  useEffect(() => {
+    if (tab === 'estudiar' && studyMode === 'summary' && activeMaterial && !activity[activeMaterial.id]?.summaryViewed) {
+      recordActivity(activeMaterial.id, value => ({ ...value, summaryViewed: true }))
+    }
+  }, [tab, studyMode, activeMaterial?.id, activity, recordActivity])
 
   useEffect(() => {
     if (!activeCourse) return
@@ -161,9 +198,9 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const pack: StudyPack | null = useMemo(() => activeMaterial?.text ? (activeMaterial.studyPack || generateStudyPack(activeMaterial.text, 10)) : null, [activeMaterial])
   const quickPack: StudyPack | null = useMemo(() => pack ? { ...pack, quiz: pack.quiz.slice(0, 5) } : null, [pack])
   const examPack: StudyPack | null = pack
-  const totalMaterials = courses.reduce((acc, course) => acc + course.materials.length, 0)
-  const pdfMaterials = courses.reduce((acc, course) => acc + course.materials.filter(m => m.sourceType === 'pdf').length, 0)
-  const aiPreparedMaterials = courses.reduce((acc, course) => acc + course.materials.filter(m => m.studyPackMeta?.source === 'nexo-ai').length, 0)
+  const totalMaterials = workspaceCourses.reduce((acc, course) => acc + course.materials.length, 0)
+  const aiPreparedMaterials = workspaceCourses.reduce((acc, course) => acc + course.materials.filter(m => m.studyPackMeta?.source === 'nexo-ai').length, 0)
+  const currentProgress = workspaceProgress(workspaceCourses, activity)
 
   const resetStudy = () => { setQuizAnswers({}); setExamAnswers({}); setFlashIndex(0); setFlashRevealed(false) }
 
@@ -191,12 +228,21 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     }
   }
 
-  const addCourse = () => {
-    const name = courseName.trim(); if (!name) return
+  const addCourse = async () => {
+    const name = courseName.trim(); if (!name || courseBusy) return
     const course: Course = { id: `course-${uid()}`, name, emoji: courseEmoji, materials: [] }
+    setCourseBusy(true); setCourseError('')
+    try {
+      if (workspaces.selectedId !== GENERAL_WORKSPACE) await workspaces.moveCourse(course.id, workspaces.selectedId)
+    } catch (error) {
+      setCourseError(error instanceof Error ? error.message : 'No pudimos crear el curso en este espacio.')
+      setCourseBusy(false)
+      return
+    }
     setCourses(prev => [...prev, course])
     setActiveCourseId(course.id)
     setCourseName(''); setCourseEmoji('📘'); setShowCourseForm(false)
+    setCourseBusy(false)
     navigate(coursePath(course.id))
   }
 
@@ -260,6 +306,12 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     setActiveCourseId(courseId); setActiveMaterialId(materialId); resetStudy(); navigate(materialPath(courseId, materialId))
   }
 
+  const switchWorkspace = (id: string, stayOnPage = false) => {
+    workspaces.setSelectedId(id)
+    setActiveCourseId(''); setActiveMaterialId(''); resetStudy()
+    if (!stayOnPage) navigate('/')
+  }
+
   const regenerateActiveMaterial = () => {
     if (!activeCourse || !activeMaterial) return
     const focus = activeMaterial.studyPackMeta?.focus || 'balanced'
@@ -273,6 +325,8 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
       ? activeMaterial.title
       : tabTitle(tab)
 
+  if (!workspaces.ready) return <div className="app-loading workspace-loading"><BrandLogo iconOnly/><strong>{workspaces.loading ? 'Cargando tus espacios…' : 'No pudimos cargar tus espacios'}</strong>{workspaces.error && <><p>{workspaces.error}</p><button className="primary" onClick={() => workspaces.refresh()}>Reintentar</button></>}</div>
+
   return (
     <div className="app-shell">
       <a href="#main-content" className="skip-link">Saltar al contenido</a>
@@ -281,7 +335,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
         <nav aria-label="Navegación principal">
           <NavButton icon="⌂" label="Inicio" active={tab === 'inicio'} onClick={() => setTab('inicio')} />
           <NavButton icon="▦" label="Mis cursos" active={tab === 'cursos'} onClick={() => setTab('cursos')} />
-          <NavButton icon="▱" label="Carpetas" active={tab === 'carpetas'} onClick={() => setTab('carpetas')} />
+          <NavButton icon="▱" label="Espacios" active={tab === 'carpetas'} onClick={() => setTab('carpetas')} />
           <NavButton icon="⌁" label="Resolver" active={tab === 'resolver'} onClick={() => setTab('resolver')} />
           <NavButton icon="✎" label="Corrector" active={tab === 'corrector'} onClick={() => setTab('corrector')} />
           <NavButton icon="✦" label="Estudiar" active={tab === 'estudiar'} onClick={() => setTab('estudiar')} />
@@ -291,20 +345,22 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
       </aside>
 
       <main className="main-content" id="main-content" tabIndex={-1}>
-        <header className="topbar"><div><p className="eyebrow">Tu espacio de estudio</p><h1>{topTitle}</h1></div><div className="top-actions"><div className="ai-chip"><span className="status-dot"></span><strong>Nexo IA</strong></div><div className="account-wrap" ref={accountRef}><button className="avatar" aria-label="Mi cuenta" aria-expanded={showAccountMenu} aria-controls="account-menu" onClick={() => setShowAccountMenu(value => !value)}>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</button>{showAccountMenu && <div className="account-menu" id="account-menu"><strong>{user.user_metadata?.full_name || 'Estudiante Nexo'}</strong><span>{user.email}</span><button disabled={signingOut} onClick={logout}>{signingOut ? 'Cerrando sesión…' : 'Cerrar sesión'}</button>{accountError && <p role="alert" className="auth-alert error">{accountError}</p>}</div>}</div></div></header>
+        <header className="topbar"><div><p className="eyebrow">Tu espacio de estudio</p><h1>{topTitle}</h1></div><div className="top-actions"><WorkspaceSwitcher selected={workspaces.selectedWorkspace} folders={workspaces.folders} counts={workspaceCounts} onSelect={id => switchWorkspace(id)} onManage={() => setTab('carpetas')}/><div className="ai-chip"><span className="status-dot"></span><strong>Nexo IA</strong></div><div className="account-wrap" ref={accountRef}><button className="avatar" aria-label="Mi cuenta" aria-expanded={showAccountMenu} aria-controls="account-menu" onClick={() => setShowAccountMenu(value => !value)}>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</button>{showAccountMenu && <div className="account-menu" id="account-menu"><strong>{user.user_metadata?.full_name || 'Estudiante Nexo'}</strong><span>{user.email}</span><button disabled={signingOut} onClick={logout}>{signingOut ? 'Cerrando sesión…' : 'Cerrar sesión'}</button>{accountError && <p role="alert" className="auth-alert error">{accountError}</p>}</div>}</div></div></header>
+        {workspaces.error && <div role="status" className="workspace-warning">{workspaces.error} Estás viendo la última organización guardada. <button onClick={() => workspaces.refresh()}>Reintentar</button></div>}
         {storageError && <p role="alert" className="auth-alert error">{storageError}</p>}
 
         {(route.courseId || route.materialId) && <div className="route-breadcrumbs"><button onClick={() => navigate('/courses')}>Cursos</button>{activeCourse && <><span>›</span><button onClick={() => navigate(coursePath(activeCourse.id))}>{activeCourse.emoji} {activeCourse.name}</button></>}{route.materialId && activeMaterial && <><span>›</span><strong>{activeMaterial.title}</strong></>}</div>}
 
         {tab === 'inicio' && <section className="page-grid">
+          <div className="workspace-context"><span>{workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</span><span>Solo el contenido de este espacio</span></div>
           <div className="hero-card"><div><span className="pill">✦ Tu material. Tu manera de aprender.</span><h2>De tus apuntes a tu próximo <em>logro.</em></h2><p>Sube un PDF y encuentra claridad. Resúmenes, flashcards y preguntas para avanzar a tu ritmo.</p><div className="hero-actions"><button className="primary" onClick={() => activeCourse ? setShowMaterialForm(true) : setShowCourseForm(true)}>＋ Subir material</button><button className="secondary" onClick={() => setTab('cursos')}>Ver mis cursos ↗</button></div><div className="hero-caption">ORGANIZA <span>·</span> COMPRENDE <span>·</span> PRACTICA</div></div><div className="hero-study-art" aria-hidden="true"><div className="art-orbit"/><div className="art-sheet art-sheet-back"/><div className="art-sheet"><span>✦ NEXO STUDY</span><h3>Todo empieza<br/>con una idea.</h3><i/><i/><i/><div><b>✓</b> Lista para aprender</div></div><div className="art-tag">✦ De PDF a posibilidades</div></div></div>
-          <div className="stats-grid"><Stat label="Cursos" value={`${courses.length}`} hint="organizados"/><Stat label="Materiales" value={`${totalMaterials}`} hint="guardados"/><Stat label="PDF preparados" value={`${aiPreparedMaterials}`} hint="con Nexo IA"/><Stat label="Resolver" value="Nexo IA" hint="texto + imagen"/></div>
-          <section className="panel wide"><div className="section-head"><div><p className="eyebrow">Continúa</p><h3>Tus cursos</h3></div><button className="text-button" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div><div className="course-row">{courses.map(course => <button className="course-mini" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>›</b></button>)}</div></section>
+          <div className="stats-grid"><Stat label="Cursos" value={`${workspaceCourses.length}`} hint="en este espacio"/><Stat label="Materiales" value={`${totalMaterials}`} hint="guardados"/><Stat label="PDF preparados" value={`${aiPreparedMaterials}`} hint="con Nexo IA"/><Stat label="Avance" value={`${currentProgress.percent}%`} hint="de este espacio"/></div>
+          <section className="panel wide"><div className="section-head"><div><p className="eyebrow">Continúa en {workspaces.selectedWorkspace.name}</p><h3>Tus cursos</h3></div><button className="text-button" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>{workspaceCourses.length ? <div className="course-row">{workspaceCourses.map(course => <button className="course-mini" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>›</b></button>)}</div> : <div className="workspace-home-empty"><p>Este espacio todavía no tiene cursos.</p><button className="secondary" onClick={() => setTab('carpetas')}>Traer un curso existente</button></div>}</section>
         </section>}
 
         {tab === 'cursos' && !route.courseId && <section className="course-library-page">
-          <div className="library-intro"><div><p className="eyebrow">Biblioteca</p><h2>Elige un curso</h2><p>Cada curso tiene ahora su propia dirección y espacio de materiales.</p></div><button className="primary" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>
-          <div className="course-library-grid">{courses.map(course => <button className="course-library-card" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>Entrar →</b></button>)}</div>
+          <div className="library-intro"><div><p className="eyebrow">Biblioteca · {workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</p><h2>Mis cursos en este espacio</h2><p>Aquí solo aparecen los cursos que pertenecen a {workspaces.selectedWorkspace.name}.</p></div><button className="primary" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>
+          {workspaceCourses.length ? <div className="course-library-grid">{workspaceCourses.map(course => <button className="course-library-card" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>Entrar →</b></button>)}</div> : <EmptyState title="Aún no hay cursos aquí" text="Crea uno nuevo o trae un curso desde otro espacio." action="Organizar espacios" onClick={() => setTab('carpetas')} />}
         </section>}
 
         {tab === 'cursos' && route.courseId && <section className="course-page">
@@ -314,9 +370,9 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
           </> : <EmptyState title="Curso no encontrado" text="Este curso no existe en este dispositivo." action="Volver a cursos" onClick={() => navigate('/courses')} />}
         </section>}
 
-        {tab === 'carpetas' && <FoldersPage courses={courses} onOpenCourse={openCourse} />}
-        {tab === 'resolver' && <ResolverPage />}
-        {tab === 'corrector' && <CorrectorPage />}
+        {tab === 'carpetas' && <FoldersPage allCourses={courses} folders={workspaces.folders} memberships={workspaces.memberships} selected={workspaces.selectedWorkspace} activity={activity} onSelect={id => switchWorkspace(id, true)} onCreate={workspaces.createWorkspace} onMove={workspaces.moveCourse} onDelete={workspaces.deleteWorkspace} onOpenCourse={openCourse} />}
+        {tab === 'resolver' && <ResolverPage key={workspaces.selectedId} workspaceId={workspaces.selectedId} />}
+        {tab === 'corrector' && <CorrectorPage key={workspaces.selectedId} />}
 
         {tab === 'estudiar' && <section className="study-layout">
           <aside className="panel material-nav"><div className="section-head compact"><div><p className="eyebrow">Material</p><h3>{activeCourse?.name ?? 'Curso'}</h3></div></div>{activeCourse?.materials.map(material => <button key={material.id} className={`material-nav-item ${activeMaterial?.id === material.id ? 'active' : ''}`} onClick={() => openMaterial(activeCourse.id, material.id)}><span>{material.sourceType === 'pdf' ? 'P' : '≡'}</span><div><strong>{material.title}</strong><small>{material.studyPackMeta?.source === 'nexo-ai' ? '✦ Preparado por Nexo IA' : material.pages?.length ? `${material.pages.length} páginas` : `${material.text.length} caracteres`}</small></div></button>)}<button className="secondary full" onClick={() => setShowMaterialForm(true)}>+ Agregar material</button></aside>
@@ -325,14 +381,14 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
             {aiGeneratingMaterialId === activeMaterial.id && <StudyGenerationBanner material={activeMaterial} />}
             {aiGenerationErrors[activeMaterial.id] && <div className="study-ai-error"><div><strong>No pude completar la preparación con IA.</strong><p>{aiGenerationErrors[activeMaterial.id]} Puedes seguir estudiando con el paquete local o intentarlo otra vez.</p></div><button className="secondary" onClick={regenerateActiveMaterial}>Reintentar</button></div>}
             {studyMode === 'summary' && <SummaryView pack={pack} material={activeMaterial} />}
-            {studyMode === 'flashcards' && <FlashcardView pack={pack} index={flashIndex} revealed={flashRevealed} setIndex={setFlashIndex} setRevealed={setFlashRevealed} />}
-            {studyMode === 'quiz' && <QuizView pack={quickPack} answers={quizAnswers} setAnswers={setQuizAnswers} title="Quiz rápido" />}
-            {studyMode === 'exam' && <QuizView pack={examPack} answers={examAnswers} setAnswers={setExamAnswers} title="Simulacro del material" exam />}
+            {studyMode === 'flashcards' && <FlashcardView pack={pack} index={flashIndex} revealed={flashRevealed} setIndex={setFlashIndex} setRevealed={setFlashRevealed} onReveal={index => recordActivity(activeMaterial.id, value => ({ ...value, flashcardsSeen: [...new Set([...(value.flashcardsSeen ?? []), index])] }))} />}
+            {studyMode === 'quiz' && <QuizView pack={quickPack} answers={quizAnswers} setAnswers={setQuizAnswers} title="Quiz rápido" onAnswer={(index, correct) => recordActivity(activeMaterial.id, value => ({ ...value, answers: { ...value.answers, [`quiz:${index}`]: correct } }))} />}
+            {studyMode === 'exam' && <QuizView pack={examPack} answers={examAnswers} setAnswers={setExamAnswers} title="Simulacro del material" exam onAnswer={(index, correct) => recordActivity(activeMaterial.id, value => ({ ...value, answers: { ...value.answers, [`exam:${index}`]: correct } }))} />}
             {studyMode === 'tutor' && <TutorView key={activeMaterial.id} material={activeMaterial} />}
           </> : <EmptyState title="No hay material seleccionado" text="Entra a un curso y agrega un PDF para crear una sesión de estudio." action="Ver cursos" onClick={() => navigate('/courses')} />}</div>
         </section>}
 
-        {tab === 'progreso' && <section className="page-grid"><div className="stats-grid"><Stat label="Cursos" value={`${courses.length}`} hint="activos"/><Stat label="Materiales" value={`${totalMaterials}`} hint="biblioteca"/><Stat label="PDF" value={`${pdfMaterials}`} hint="procesados"/><Stat label="IA preparada" value={`${aiPreparedMaterials}`} hint="sesiones generadas"/></div><div className="panel wide roadmap-card"><p className="eyebrow">V0.8 beta</p><h3>Una ruta distinta para cada parte de tu estudio</h3><div className="feature-grid"><Feature icon="🔗" title="Rutas reales" text="Cursos y materiales tienen URLs separadas, listas para compartir y navegar con atrás/adelante."/><Feature icon="✦" title="PDF → Nexo IA" text="Al guardar un PDF se genera automáticamente resumen, flashcards y quiz."/><Feature icon="📄" title="Muestreo por páginas" text="Nexo distribuye la lectura a lo largo del PDF y conserva referencias de página."/><Feature icon="🎯" title="Perfil de estudio" text="Elige comprender, memorizar, equilibrado o preparación de examen."/><Feature icon="🧠" title="Fallback local" text="Si la IA no responde, el material sigue siendo estudiable sin bloquearte."/><Feature icon="☁️" title="Supabase" text="Cuenta, onboarding, carpetas, feedback y administración protegida por RLS."/></div></div></section>}
+        {tab === 'progreso' && <ProgressPage workspace={workspaces.selectedWorkspace} courses={workspaceCourses} activity={activity} onOpenMaterial={openMaterial} />}
       </main>
 
       <nav className="mobile-nav" aria-label="Navegación móvil">
@@ -342,9 +398,9 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
         <NavButton icon="✦" label="Estudiar" active={tab === 'estudiar'} onClick={() => setTab('estudiar')}/>
         <button className={`nav-button ${['carpetas', 'corrector', 'progreso'].includes(tab) ? 'active' : ''}`} aria-label="Más opciones" aria-haspopup="dialog" onClick={() => setShowMobileMenu(true)}><Icon name="more"/><span className="nav-label">Más</span></button>
       </nav>
-      {showMobileMenu && <Modal title="Tu espacio Nexo" onClose={() => setShowMobileMenu(false)}><div className="mobile-more-list"><NavButton icon="▱" label="Carpetas" active={tab === 'carpetas'} onClick={() => setTab('carpetas')}/><NavButton icon="✎" label="Corrector" active={tab === 'corrector'} onClick={() => setTab('corrector')}/><NavButton icon="↗" label="Progreso" active={tab === 'progreso'} onClick={() => setTab('progreso')}/></div></Modal>}
+      {showMobileMenu && <Modal title="Tu espacio Nexo" onClose={() => setShowMobileMenu(false)}><div className="mobile-more-list"><NavButton icon="▱" label="Espacios" active={tab === 'carpetas'} onClick={() => setTab('carpetas')}/><NavButton icon="✎" label="Corrector" active={tab === 'corrector'} onClick={() => setTab('corrector')}/><NavButton icon="↗" label="Progreso" active={tab === 'progreso'} onClick={() => setTab('progreso')}/></div></Modal>}
 
-      {showCourseForm && <Modal title="Nuevo curso" onClose={() => setShowCourseForm(false)}><div className="course-emoji-preview"><span>{courseEmoji}</span><div><strong>Dale una identidad a tu curso</strong><small>El emoji hará que sea más fácil reconocerlo de un vistazo.</small></div></div><div className="course-emoji-picker">{['📘','🧠','🧪','🩺','🦷','📐','⚛️','💻','📚','🌎','⚖️','💹','🧬','🔬','🎨','🎯'].map(emoji => <button key={emoji} className={courseEmoji === emoji ? 'active' : ''} onClick={() => setCourseEmoji(emoji)}>{emoji}</button>)}</div><label>Nombre del curso<input autoFocus value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Ej. Histología" onKeyDown={e => e.key === 'Enter' && addCourse()} /></label><div className="modal-actions"><button className="secondary" onClick={() => setShowCourseForm(false)}>Cancelar</button><button className="primary" onClick={addCourse}>Crear curso</button></div></Modal>}
+      {showCourseForm && <Modal title={`Nuevo curso · ${workspaces.selectedWorkspace.name}`} onClose={() => setShowCourseForm(false)}><div className="course-emoji-preview"><span>{courseEmoji}</span><div><strong>Un curso para {workspaces.selectedWorkspace.name}</strong><small>Quedará dentro de este espacio y su avance se medirá aquí.</small></div></div><div className="course-emoji-picker">{['📘','🧠','🧪','🩺','🦷','📐','⚛️','💻','📚','🌎','⚖️','💹','🧬','🔬','🎨','🎯'].map(emoji => <button key={emoji} className={courseEmoji === emoji ? 'active' : ''} onClick={() => setCourseEmoji(emoji)}>{emoji}</button>)}</div><label>Nombre del curso<input autoFocus value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Ej. Histología" onKeyDown={e => e.key === 'Enter' && addCourse()} /></label>{courseError && <div role="alert" className="auth-alert error">{courseError}</div>}<div className="modal-actions"><button className="secondary" onClick={() => setShowCourseForm(false)}>Cancelar</button><button className="primary" disabled={courseBusy || !courseName.trim()} onClick={addCourse}>{courseBusy ? 'Creando…' : 'Crear curso'}</button></div></Modal>}
 
       {showMaterialForm && <Modal title={`Agregar material${activeCourse ? ` · ${activeCourse.name}` : ''}`} onClose={() => { setShowMaterialForm(false); resetMaterialForm() }} wide>{!activeCourse ? <p>Primero crea un curso.</p> : <><div className="upload-box"><input id="file-upload" type="file" accept=".txt,.md,.pdf" onChange={e => importFile(e.target.files?.[0])}/><label htmlFor="file-upload"><span>↑</span><strong>Subir PDF, TXT o MD</strong><small>Los PDF se leen por páginas. Al guardarlos Nexo IA prepara automáticamente tu sesión.</small></label></div>{importStatus && <div className={`import-status ${importStatus.startsWith('⚠') ? 'error' : ''}`}>{importStatus}</div>}<label>Título<input value={materialTitle} onChange={e => setMaterialTitle(e.target.value)} placeholder="Ej. Clase 04 — Patología oral" /></label><label>Texto extraído / apuntes<textarea rows={7} value={materialText} onChange={e => { setMaterialText(e.target.value); if (!sourceName) setSourceType('text') }} placeholder="También puedes pegar aquí tus apuntes directamente…" /></label>{sourceType === 'pdf' && <div className="study-profile-box"><div><p className="eyebrow">Ayuda a Nexo IA</p><h3>¿Cómo quieres estudiar este PDF?</h3><p>Esta guía cambia el tipo de flashcards y preguntas que se generan.</p></div><div className="study-focus-grid">{studyFocusOptions.map(option => <button key={option.value} className={studyFocus === option.value ? 'active' : ''} onClick={() => setStudyFocus(option.value)}><span>{option.icon}</span><div><strong>{option.label}</strong><small>{option.hint}</small></div></button>)}</div><div className="study-level-row"><span>Nivel</span>{studyLevelOptions.map(option => <button key={option.value} className={studyLevel === option.value ? 'active' : ''} onClick={() => setStudyLevel(option.value)}>{option.label}</button>)}</div></div>}<div className="modal-actions"><button className="secondary" onClick={() => { setShowMaterialForm(false); resetMaterialForm() }}>Cancelar</button><button className="primary" disabled={!materialTitle.trim() || !materialText.trim()} onClick={addMaterial}>{sourceType === 'pdf' ? 'Guardar y preparar con Nexo IA' : 'Guardar y estudiar'}</button></div></>}</Modal>}
       <FeedbackWidget context={pathname} />
@@ -354,7 +410,6 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
 
 function NavButton({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) { return <button className={`nav-button ${active ? 'active' : ''}`} title={label} aria-label={label} aria-current={active ? 'page' : undefined} onClick={onClick}><Icon name={icon}/><span className="nav-label">{label}</span></button> }
 function Stat({ label, value, hint }: { label: string; value: string; hint: string }) { return <div className="stat-card"><p>{label}</p><strong>{value}</strong><small>{hint}</small></div> }
-function Feature({ icon, title, text }: { icon: string; title: string; text: string }) { return <div className="feature-card"><span>{icon}</span><div><strong>{title}</strong><p>{text}</p></div></div> }
 function EmptyState({ title, text, action, onClick }: { title: string; text: string; action: string; onClick: () => void }) { return <div className="empty-state"><span>✦</span><h3>{title}</h3><p>{text}</p><button className="primary" onClick={onClick}>{action}</button></div> }
 
 function StudyGenerationBanner({ material }: { material: Material }) {
@@ -366,18 +421,18 @@ function SummaryView({ pack, material }: { pack: StudyPack; material: Material }
   return <div className="study-content"><div className="ai-note"><span>{ai ? '✦' : '⚙'}</span><div><strong>{ai ? 'Preparado por Nexo IA' : 'Paquete local de respaldo'}</strong><p>{ai ? `Generado para un enfoque ${material.studyPackMeta?.focus || 'equilibrado'}${material.studyPackMeta?.sampledPages?.length ? ` · ${material.studyPackMeta.sampledPages.length} páginas muestreadas` : ''}.` : 'Este material sigue disponible aunque la generación con IA todavía no se haya completado.'}</p></div></div><div className="keyword-row">{pack.keywords.slice(0, 10).map(k => <span key={k}>{k}</span>)}</div><div className="summary-list">{pack.summary.map((item, index) => <div key={index}><span>{String(index + 1).padStart(2, '0')}</span><p>{item.replace(/\.$/, '')}.</p></div>)}</div></div>
 }
 
-function FlashcardView({ pack, index, revealed, setIndex, setRevealed }: { pack: StudyPack; index: number; revealed: boolean; setIndex: (n: number) => void; setRevealed: (v: boolean) => void }) {
+function FlashcardView({ pack, index, revealed, setIndex, setRevealed, onReveal }: { pack: StudyPack; index: number; revealed: boolean; setIndex: (n: number) => void; setRevealed: (v: boolean) => void; onReveal: (index: number) => void }) {
   const safeIndex = Math.min(index, Math.max(0, pack.flashcards.length - 1))
   const card = pack.flashcards[safeIndex]
   if (!card) return <div className="tutor-empty"><span>✦</span><p>No hay flashcards disponibles todavía.</p></div>
   const move = (delta: number) => { setIndex((safeIndex + delta + pack.flashcards.length) % pack.flashcards.length); setRevealed(false) }
-  return <div className="flash-wrap"><p className="counter">Tarjeta {safeIndex + 1} de {pack.flashcards.length}{card.sourcePage ? ` · Página ${card.sourcePage}` : ''}</p><button className={`flashcard ${revealed ? 'revealed' : ''}`} onClick={() => setRevealed(!revealed)}><small>{revealed ? 'RESPUESTA' : 'PREGUNTA'}</small><strong>{revealed ? card.back : card.front}</strong><span>{revealed ? 'Toca para volver' : 'Toca para revelar'}</span></button><div className="flash-controls"><button className="secondary" onClick={() => move(-1)}>← Anterior</button><button className="primary" onClick={() => move(1)}>Siguiente →</button></div></div>
+  return <div className="flash-wrap"><p className="counter">Tarjeta {safeIndex + 1} de {pack.flashcards.length}{card.sourcePage ? ` · Página ${card.sourcePage}` : ''}</p><button className={`flashcard ${revealed ? 'revealed' : ''}`} onClick={() => { if (!revealed) onReveal(safeIndex); setRevealed(!revealed) }}><small>{revealed ? 'RESPUESTA' : 'PREGUNTA'}</small><strong>{revealed ? card.back : card.front}</strong><span>{revealed ? 'Toca para volver' : 'Toca para revelar'}</span></button><div className="flash-controls"><button className="secondary" onClick={() => move(-1)}>← Anterior</button><button className="primary" onClick={() => move(1)}>Siguiente →</button></div></div>
 }
 
-function QuizView({ pack, answers, setAnswers, title, exam = false }: { pack: StudyPack; answers: Record<number, number>; setAnswers: (value: Record<number, number>) => void; title: string; exam?: boolean }) {
+function QuizView({ pack, answers, setAnswers, title, exam = false, onAnswer }: { pack: StudyPack; answers: Record<number, number>; setAnswers: (value: Record<number, number>) => void; title: string; exam?: boolean; onAnswer: (index: number, correct: boolean) => void }) {
   const answered = Object.keys(answers).length
   const correct = Object.entries(answers).filter(([i, a]) => pack.quiz[Number(i)]?.answer === a).length
-  return <div className="quiz-list"><div className="quiz-toolbar"><div><p className="eyebrow">{exam ? 'Modo examen' : 'Práctica'}</p><h3>{title}</h3></div><div className="score-chip">{answered}/{pack.quiz.length} · {answered ? Math.round(correct / answered * 100) : 0}%</div></div>{pack.quiz.map((question, qi) => { const selected = answers[qi]; const done = selected !== undefined; return <article className="quiz-card" key={qi}><div className="question-number">Pregunta {qi + 1}{question.sourcePage ? ` · pág. ${question.sourcePage}` : ''}</div><h3>{question.question}</h3><div className="options">{question.options.map((option, oi) => { const ok = done && oi === question.answer; const wrong = done && oi === selected && oi !== question.answer; return <button disabled={done} className={`${ok ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} key={oi} onClick={() => setAnswers({ ...answers, [qi]: oi })}><span>{String.fromCharCode(65 + oi)}</span>{option}</button> })}</div>{done && <div className={`feedback ${selected === question.answer ? 'ok' : 'no'}`}><strong>{selected === question.answer ? '✓ Correcto' : '✕ Revisa esta idea'}</strong><p>{question.explanation}</p></div>}</article>})}</div>
+  return <div className="quiz-list"><div className="quiz-toolbar"><div><p className="eyebrow">{exam ? 'Modo examen' : 'Práctica'}</p><h3>{title}</h3></div><div className="score-chip">{answered}/{pack.quiz.length} · {answered ? Math.round(correct / answered * 100) : 0}%</div></div>{pack.quiz.map((question, qi) => { const selected = answers[qi]; const done = selected !== undefined; return <article className="quiz-card" key={qi}><div className="question-number">Pregunta {qi + 1}{question.sourcePage ? ` · pág. ${question.sourcePage}` : ''}</div><h3>{question.question}</h3><div className="options">{question.options.map((option, oi) => { const ok = done && oi === question.answer; const wrong = done && oi === selected && oi !== question.answer; return <button disabled={done} className={`${ok ? 'correct' : ''} ${wrong ? 'wrong' : ''}`} key={oi} onClick={() => { onAnswer(qi, oi === question.answer); setAnswers({ ...answers, [qi]: oi }) }}><span>{String.fromCharCode(65 + oi)}</span>{option}</button> })}</div>{done && <div className={`feedback ${selected === question.answer ? 'ok' : 'no'}`}><strong>{selected === question.answer ? '✓ Correcto' : '✕ Revisa esta idea'}</strong><p>{question.explanation}</p></div>}</article>})}</div>
 }
 
 function TutorView({ material }: { material: Material }) {
@@ -388,5 +443,5 @@ function TutorView({ material }: { material: Material }) {
 }
 
 function Modal({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) { return <Dialog title={title} onClose={onClose} className={`modal ${wide ? 'wide-modal' : ''}`}><div className="modal-head"><h2>{title}</h2><button aria-label="Cerrar diálogo" onClick={onClose}>×</button></div>{children}</Dialog> }
-function tabTitle(tab: AppTab) { const hour = new Date().getHours(); return ({ inicio: `${hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches'} 👋`, cursos: 'Mis cursos', carpetas: 'Carpetas', resolver: 'Resolver con Nexo IA', corrector: 'Corrector de trabajos', estudiar: 'Sala de estudio', progreso: 'Tu progreso' } as const)[tab] }
+function tabTitle(tab: AppTab) { const hour = new Date().getHours(); return ({ inicio: `${hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches'} 👋`, cursos: 'Mis cursos', carpetas: 'Espacios', resolver: 'Resolver con Nexo IA', corrector: 'Corrector de trabajos', estudiar: 'Sala de estudio', progreso: 'Tu progreso' } as const)[tab] }
 export default App

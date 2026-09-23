@@ -15,10 +15,18 @@ type HistoryItem = {
   imageCount: number
 }
 
-const HISTORY_PREFIX = 'nexo-study-resolver-history-v3:'
+const HISTORY_PREFIX = 'nexo-study-resolver-history-v4:'
+const LEGACY_HISTORY_PREFIX = 'nexo-study-resolver-history-v3:'
 
-function loadLocalHistory(userId: string): HistoryItem[] {
-  try { return JSON.parse(localStorage.getItem(`${HISTORY_PREFIX}${userId}`) || '[]') }
+function historyKey(userId: string, workspaceId: string) { return `${HISTORY_PREFIX}${userId}:${workspaceId}` }
+
+function loadLocalHistory(userId: string, workspaceId: string): HistoryItem[] {
+  try {
+    const saved = localStorage.getItem(historyKey(userId, workspaceId))
+      ?? (workspaceId === 'general' ? localStorage.getItem(`${LEGACY_HISTORY_PREFIX}${userId}`) : null)
+    const parsed: unknown = JSON.parse(saved || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  }
   catch { return [] }
 }
 
@@ -30,7 +38,7 @@ const suggestions: Record<string, string[]> = {
   Historia: ['Ubica el hecho en su contexto histórico', 'Explica causas y consecuencias', '¿Qué dato distingue esta alternativa?'],
 }
 
-export function ResolverPage() {
+export function ResolverPage({ workspaceId }: { workspaceId: string }) {
   const { user } = useAuth()
   const inputRef = useRef<HTMLInputElement>(null)
   const [category, setCategory] = useState('General')
@@ -46,37 +54,15 @@ export function ResolverPage() {
   const [imageBusy, setImageBusy] = useState(false)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
-  const [history, setHistory] = useState<HistoryItem[]>(() => user ? loadLocalHistory(user.id) : [])
+  const [history, setHistory] = useState<HistoryItem[]>(() => user ? loadLocalHistory(user.id, workspaceId) : [])
   const categories = ['General', 'Matemáticas', 'Biología', 'Química', 'Historia']
   const currentSuggestions = useMemo(() => suggestions[category] || suggestions.General, [category])
 
   useEffect(() => {
     if (!user) return
-    localStorage.setItem(`${HISTORY_PREFIX}${user.id}`, JSON.stringify(history.slice(0, 25)))
-  }, [history, user])
-
-  useEffect(() => {
-    if (!user || !supabase) return
-    let cancelled = false
-    supabase.from('ai_queries')
-      .select('id, question, category, answer, created_at, deep, image_count')
-      .eq('task', 'solve')
-      .order('created_at', { ascending: false })
-      .limit(25)
-      .then(({ data, error: queryError }) => {
-        if (cancelled || queryError || !data) return
-        setHistory(data.map(row => ({
-          id: row.id,
-          question: row.question,
-          category: row.category,
-          answer: row.answer,
-          createdAt: row.created_at,
-          deep: row.deep,
-          imageCount: row.image_count || 0,
-        })))
-      })
-    return () => { cancelled = true }
-  }, [user])
+    try { localStorage.setItem(historyKey(user.id, workspaceId), JSON.stringify(history.slice(0, 25))) }
+    catch { /* The answer stays available in this session. */ }
+  }, [history, user, workspaceId])
 
   const importImages = async (files: File[]) => {
     if (!files.length) return
@@ -162,9 +148,10 @@ export function ResolverPage() {
   }
 
   const clearHistory = async () => {
+    const ids = history.map(item => item.id).filter((id): id is string => Boolean(id))
     setHistory([])
-    if (user) localStorage.removeItem(`${HISTORY_PREFIX}${user.id}`)
-    if (user && supabase) await supabase.from('ai_queries').delete().eq('user_id', user.id).eq('task', 'solve')
+    if (user && workspaceId === 'general') localStorage.removeItem(`${LEGACY_HISTORY_PREFIX}${user.id}`)
+    if (user && supabase && ids.length) await supabase.from('ai_queries').delete().eq('user_id', user.id).in('id', ids)
   }
 
   return <section className="resolver-shell">

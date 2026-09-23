@@ -267,3 +267,135 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+
+/* Spaces are the active context for the whole study workspace. */
+.workspace-switcher { position: relative; flex-shrink: 0; }
+.workspace-trigger { display: flex; align-items: center; gap: 10px; min-height: 47px; max-width: 220px; border: 1px solid #a999f84a; border-radius: 13px; background: #a18aff14; padding: 6px 12px; cursor: pointer; text-align: left; }
+.workspace-trigger:hover, .workspace-trigger[aria-expanded="true"] { border-color: #b9a7ff9c; background: #a18aff22; }
+.workspace-trigger-icon { width: 31px; height: 31px; flex-shrink: 0; display: grid; place-items: center; border-radius: 9px; background: #a18aff24; font-size: 17px; }
+.workspace-trigger-copy { min-width: 0; display: grid; gap: 2px; }
+.workspace-trigger-copy small { font-size: 8px; font-weight: 800; letter-spacing: 1.1px; color: #ac9ae8; }
+.workspace-trigger-copy strong { font-size: 12px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-chevron { font-size: 17px; color: #b9a7ed; margin-left: auto; }
+.workspace-menu { position: absolute; right: 0; top: calc(100% + 9px); z-index: 90; width: min(300px, calc(100vw - 26px)); max-height: min(420px, 68dvh); overflow-y: auto; border: 1px solid #b39fff55; border-radius: 17px; padding: 9px; background: #161a2b; box-shadow: 0 22px 65px #0008; }
+.workspace-menu-title { color: #9fa9c0; padding: 9px 11px 12px; font-size: 10px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; }
+.workspace-option { width: 100%; min-height: 57px; display: flex; align-items: center; gap: 11px; border: 1px solid transparent; border-radius: 11px; background: transparent; padding: 8px 10px; text-align: left; cursor: pointer; }
+.workspace-option:hover, .workspace-option.active { background: #a994ff1b; border-color: #a994ff32; }
+.workspace-option > span:first-child { font-size: 21px; width: 32px; text-align: center; }
+.workspace-option > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; flex: 1; }
+.workspace-option strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-option small { color: var(--muted); font-size: 11px; }
+.workspace-option b { color: #baa9ff; }
+.workspace-manage { width: 100%; min-height: 46px; margin-top: 7px; border: 0; border-top: 1px solid var(--border); background: transparent; color: #c9bcff; text-align: left; padding: 10px 11px; font-size: 12px; font-weight: 800; cursor: pointer; }
+.workspace-context { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: -7px; font-size: 11px; }
+.workspace-context span:first-child { border: 1px solid #a994ff38; background: #a994ff14; padding: 7px 11px; border-radius: 999px; font-weight: 800; color: #e3daff; }
+.workspace-context span:last-child { color: var(--muted); }
+.workspace-home-empty { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; justify-content: space-between; border: 1px dashed var(--border); border-radius: 13px; padding: 15px; color: var(--muted); font-size: 13px; }
+.workspace-home-empty p { margin: 0; }
+.workspace-warning { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border: 1px solid #ffd49b38; background: #ffd49b0b; color: #f3d9b4; border-radius: 12px; padding: 12px 14px; margin: -12px 0 20px; font-size: 12px; }
+.workspace-warning button { min-height: 36px; border: 0; background: transparent; color: #e5c6ff; font-weight: 800; cursor: pointer; }
+.workspace-loading { padding: 28px; text-align: center; }
+.workspace-loading p { color: var(--muted); font-size: 13px; max-width: 340px; }
+
+.spaces-page { display: grid; gap: 20px; }
+.spaces-intro { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 26px 28px; border: 1px solid #b39fff33; border-radius: 20px; background: linear-gradient(110deg, #1b1a31, #13192a); }
+.spaces-intro > div { min-width: 0; }
+.spaces-intro h2 { font: 800 clamp(26px, 3vw, 33px) Manrope, sans-serif; margin: 0; letter-spacing: -.9px; }
+.spaces-intro p:last-child { max-width: 640px; color: var(--muted); font-size: 13px; line-height: 1.6; margin: 8px 0 0; }
+.spaces-intro > button { flex-shrink: 0; }
+.spaces-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.space-card { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 121px; padding: 17px; border: 1px solid var(--border); border-radius: 17px; background: #151a2a; color: var(--text); cursor: pointer; text-align: left; }
+.space-card:hover, .space-card.active { border-color: #ac98ff8c; background: #211e39; }
+.space-card.active { box-shadow: inset 0 0 0 1px #ac98ff3b; }
+.space-card-emoji { display: grid; place-items: center; width: 39px; height: 39px; border-radius: 11px; background: #a994ff1a; font-size: 22px; }
+.space-card-copy { min-width: 0; display: grid; gap: 3px; }
+.space-card-copy strong { font: 800 14px Manrope, sans-serif; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.space-card-copy small { color: var(--muted); font-size: 10px; white-space: nowrap; }
+.space-card-percent { color: #c5b7ff; font: 800 16px Manrope, sans-serif; }
+.space-card-track { grid-column: 1/-1; height: 5px; background: #ffffff12; border-radius: 999px; overflow: hidden; margin-top: 7px; }
+.space-card-track i, .progress-main-track span, .progress-course-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #a58bff, #7de3d0); }
+.spaces-create { display: grid; gap: 16px; }
+.spaces-create h3 { margin: 0; font: 800 19px Manrope, sans-serif; }
+.spaces-create .folder-emoji-row button { min-width: 44px; min-height: 44px; font-size: 21px; }
+.spaces-create-actions { display: flex; gap: 8px; }
+.spaces-create-actions input { min-width: 0; flex: 1; border: 1px solid var(--border); border-radius: 10px; background: #0b101b; color: var(--text); padding: 10px 12px; }
+.spaces-content { min-height: 380px; }
+.spaces-content .section-head { align-items: flex-start; }
+.spaces-content .section-head h2 { font: 800 25px Manrope, sans-serif; margin: 0; }
+.spaces-content-subtitle { color: var(--muted); font-size: 12px; margin: 6px 0 0; }
+.spaces-content-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.spaces-content .folder-course-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.spaces-content .folder-course-card { min-width: 0; }
+.spaces-content .folder-course-open { min-height: 62px; }
+.spaces-content .folder-course-open strong { overflow-wrap: anywhere; }
+.spaces-content .folder-course-open small { font-size: 11px; }
+.spaces-content .folder-course-foot select { min-height: 40px; max-width: 190px; font-size: 11px; }
+.spaces-bring { margin-bottom: 20px; border: 1px solid #b5a2ff3d; border-radius: 14px; padding: 14px; background: #a18aff0b; }
+.spaces-bring > strong { display: block; margin-bottom: 11px; font-size: 12px; }
+.spaces-bring > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 7px; }
+.spaces-bring button { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 48px; border: 1px solid var(--border); border-radius: 10px; background: #111725; text-align: left; padding: 9px 11px; cursor: pointer; font-size: 12px; }
+.spaces-bring button span { flex-shrink: 0; color: #c4b6ff; font-size: 11px; }
+.spaces-bring p { color: var(--muted); font-size: 12px; }
+.spaces-content .folder-empty { min-height: 240px; }
+
+.progress-page { gap: 18px; }
+.progress-intro { display: flex; align-items: center; gap: 16px; padding: 24px 28px; border: 1px solid #b3a0ff45; border-radius: 20px; background: linear-gradient(115deg, #201d39, #151b2c); }
+.progress-intro-icon { display: grid; place-items: center; flex-shrink: 0; width: 64px; height: 64px; border-radius: 18px; background: #a994ff20; font-size: 30px; }
+.progress-intro > div:nth-child(2) { min-width: 0; flex: 1; }
+.progress-intro h2 { margin: 0; font: 800 28px Manrope, sans-serif; }
+.progress-intro p:last-child { color: var(--muted); font-size: 12px; margin: 5px 0 0; }
+.progress-overall { display: grid; text-align: right; gap: 2px; }
+.progress-overall strong { font: 800 35px Manrope, sans-serif; color: #c7baff; }
+.progress-overall span { color: var(--muted); font-size: 11px; }
+.progress-main-track, .progress-course-track { height: 7px; background: #1d2435; border-radius: 999px; overflow: hidden; }
+.progress-main-track { margin: -9px 4px 4px; }
+.progress-course-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 13px; }
+.progress-course { min-width: 0; }
+.progress-course-head { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 15px; }
+.progress-course-head > div { display: flex; gap: 11px; align-items: center; min-width: 0; }
+.progress-course-emoji { font-size: 27px; }
+.progress-course-head h3 { margin: 0; font: 800 16px Manrope, sans-serif; }
+.progress-course-head p { color: var(--muted); font-size: 11px; margin: 4px 0 0; }
+.progress-course-head > strong { color: #c7baff; font: 800 19px Manrope, sans-serif; }
+.progress-course-track { height: 5px; }
+.progress-material-list { display: grid; margin-top: 14px; }
+.progress-material-list button { min-width: 0; min-height: 42px; display: flex; justify-content: space-between; align-items: center; gap: 10px; border: 0; border-top: 1px solid var(--border); background: transparent; text-align: left; padding: 8px 0; cursor: pointer; font-size: 12px; }
+.progress-material-list button span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progress-material-list button span:last-child { flex-shrink: 0; color: #bdafff; }
+.progress-empty { text-align: center; padding: 55px 20px; }
+.progress-empty > span { color: #ad98ff; font-size: 28px; }
+.progress-empty h3 { font: 800 22px Manrope, sans-serif; margin: 10px 0 6px; }
+.progress-empty p { max-width: 400px; margin: 0 auto; font-size: 13px; line-height: 1.6; color: var(--muted); }
+.progress-explainer { color: var(--muted); font-size: 11px; line-height: 1.6; margin: 1px 0; }
+
+@media (max-width: 700px) {
+  .topbar { flex-wrap: wrap; align-items: flex-start; }
+  .topbar > div:first-child { flex: 1 1 calc(100% - 64px); }
+  .top-actions { flex: 1 1 100%; width: 100%; justify-content: flex-end; gap: 9px; }
+  .workspace-trigger { max-width: min(280px, calc(100vw - 96px)); min-height: 47px; }
+  .workspace-trigger-copy strong { max-width: min(145px, calc(100vw - 190px)); }
+  .spaces-intro { flex-direction: column; align-items: flex-start; padding: 22px; }
+  .spaces-intro > button { width: 100%; }
+  .spaces-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .space-card { grid-template-columns: 35px minmax(0, 1fr); min-height: 115px; padding: 12px; }
+  .space-card-emoji { width: 33px; height: 33px; font-size: 19px; }
+  .space-card-copy strong { font-size: 12px; }
+  .space-card-copy small { font-size: 9px; }
+  .space-card-percent { grid-column: 1/-1; font-size: 14px; }
+  .space-card-track { margin-top: 0; }
+  .spaces-create-actions { flex-wrap: wrap; }
+  .spaces-create-actions input { flex: 1 1 100%; min-height: 48px; font-size: 16px; }
+  .spaces-create-actions button { flex: 1; }
+  .spaces-content .section-head { display: flex; flex-direction: column; align-items: stretch; }
+  .spaces-content-actions { justify-content: space-between; }
+  .spaces-content .folder-course-grid { grid-template-columns: 1fr; }
+  .progress-intro { flex-wrap: wrap; padding: 20px; }
+  .progress-overall { flex-basis: 100%; display: flex; align-items: baseline; gap: 10px; text-align: left; }
+  .progress-overall strong { font-size: 29px; }
+  .progress-course-list { grid-template-columns: 1fr; }
+}
+@media (max-width: 360px) {
+  .spaces-grid { grid-template-columns: 1fr; }
+  .workspace-trigger-copy small { font-size: 7px; }
+  .workspace-context { font-size: 10px; }
+}

@@ -96,7 +96,7 @@ test('all workspace routes fit the viewport and mobile navigation reaches every 
   if (page.viewportSize()!.width <= 700) {
     const nav = page.getByRole('navigation', { name: 'Navegación móvil' })
     await expect(nav).toBeVisible()
-    for (const name of ['Carpetas', 'Corrector', 'Progreso']) {
+    for (const name of ['Espacios', 'Corrector', 'Progreso']) {
       await nav.getByRole('button', { name: 'Más opciones' }).click()
       const dialog = page.getByRole('dialog', { name: 'Tu espacio Nexo' })
       await expect(dialog).toBeVisible()
@@ -118,7 +118,7 @@ test('bad URLs and malformed saved courses recover without a blank page', async 
   await page.goto('/courses')
   await expect(page.getByRole('button', { name: 'Mi cuenta' })).toBeVisible()
   await page.evaluate(() => { window.history.pushState({}, '', '/courses/%invalid'); window.dispatchEvent(new PopStateEvent('popstate')) })
-  await expect(page.getByRole('heading', { name: 'Elige un curso' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Mis cursos en este espacio' })).toBeVisible()
   await noOverflow(page)
 })
 
