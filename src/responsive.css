@@ -1,5 +1,5 @@
 /* Shared polish and responsive layout, loaded after the original feature styles. */
-:root { color-scheme: dark; --muted: #a0aac0; --border: rgba(177, 188, 224, .13); }
+:root { color-scheme: dark; --muted: #a0aac0; --border: rgba(177, 188, 224, .13); --text-xs: 12px; --text-sm: 13px; --text-md: 14px; }
 html { scroll-padding-top: 24px; -webkit-text-size-adjust: 100%; }
 body { min-width: 320px; }
 button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
@@ -60,10 +60,10 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .stat-card { padding: 20px 22px; background: linear-gradient(135deg, #141a2a, #101521); }
 .stat-card strong { font-size: 30px; letter-spacing: -1px; }
 .stat-card p { color: #c1c8d8; font-size: 13px; }
-.panel { padding: 24px; }
+.panel { padding: 28px; }
 .course-library-card { min-height: 200px; background: linear-gradient(145deg, #171c2f, #111624); }
 .course-library-card > span { width: 54px; height: 54px; border-radius: 15px; background: #a997ff12; display: grid; place-items: center; font-size: 29px; margin-bottom: 18px; }
-.course-library-card strong { font-size: 18px; }
+.course-library-card strong { font-size: 18px; line-height: 1.4; max-width: 100%; white-space: normal; }
 .course-library-card > b { border-top: 1px solid var(--border); padding-top: 15px; margin-top: 20px; }
 .course-mini, .course-mini div, .course-list-item div, .material-nav-item div, .study-heading > div, .folders-main, .folder-course-card { min-width: 0; }
 .study-layout { grid-template-columns: 240px minmax(0, 1fr); }
@@ -154,6 +154,13 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
   .art-tag { right: -15px; font-size: 9px; }
   .study-layout { grid-template-columns: minmax(0, 1fr); }
   .material-nav { order: 2; }
+}
+@media (min-width: 1151px) and (max-width: 1180px) {
+  .study-layout { grid-template-columns: minmax(0, 1fr); }
+}
+@media (min-width: 951px) and (max-width: 1150px) {
+  .folders-layout { grid-template-columns: minmax(0, 1fr); }
+  .folders-sidebar, .folders-main { min-height: auto; }
 }
 @media (min-width: 701px) and (max-width: 950px) {
   .app-shell { grid-template-columns: 80px minmax(0, 1fr); }
@@ -275,7 +282,7 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .workspace-trigger-icon { width: 31px; height: 31px; flex-shrink: 0; display: grid; place-items: center; border-radius: 9px; background: #a18aff24; font-size: 17px; }
 .workspace-trigger-copy { min-width: 0; display: grid; gap: 2px; }
 .workspace-trigger-copy small { font-size: 8px; font-weight: 800; letter-spacing: 1.1px; color: #ac9ae8; }
-.workspace-trigger-copy strong { font-size: 12px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-trigger-copy strong { font-size: var(--text-sm); max-width: 165px; overflow: hidden; text-overflow: ellipsis; white-space: normal; line-height: 1.35; }
 .workspace-chevron { font-size: 17px; color: #b9a7ed; margin-left: auto; }
 .workspace-menu { position: absolute; right: 0; top: calc(100% + 9px); z-index: 90; width: min(300px, calc(100vw - 26px)); max-height: min(420px, 68dvh); overflow-y: auto; border: 1px solid #b39fff55; border-radius: 17px; padding: 9px; background: #161a2b; box-shadow: 0 22px 65px #0008; }
 .workspace-menu-title { color: #9fa9c0; padding: 9px 11px 12px; font-size: 10px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; }
@@ -283,7 +290,7 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .workspace-option:hover, .workspace-option.active { background: #a994ff1b; border-color: #a994ff32; }
 .workspace-option > span:first-child { font-size: 21px; width: 32px; text-align: center; }
 .workspace-option > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; flex: 1; }
-.workspace-option strong { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-option strong { font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: normal; line-height: 1.4; }
 .workspace-option small { color: var(--muted); font-size: 11px; }
 .workspace-option b { color: #baa9ff; }
 .workspace-manage { width: 100%; min-height: 46px; margin-top: 7px; border: 0; border-top: 1px solid var(--border); background: transparent; color: #c9bcff; text-align: left; padding: 10px 11px; font-size: 12px; font-weight: 800; cursor: pointer; }
@@ -373,7 +380,7 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
   .topbar > div:first-child { flex: 1 1 calc(100% - 64px); }
   .top-actions { flex: 1 1 100%; width: 100%; justify-content: flex-end; gap: 9px; }
   .workspace-trigger { max-width: min(280px, calc(100vw - 96px)); min-height: 47px; }
-  .workspace-trigger-copy strong { max-width: min(145px, calc(100vw - 190px)); }
+  .workspace-trigger-copy strong { max-width: min(165px, calc(100vw - 170px)); }
   .spaces-intro { flex-direction: column; align-items: flex-start; padding: 22px; }
   .spaces-intro > button { width: 100%; }
   .spaces-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
@@ -407,7 +414,7 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .workspace-edge-icon { flex: 0 0 34px; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: #ffffff14; font-size: 18px; }
 .workspace-edge-copy { min-width: 0; display: grid; gap: 2px; flex: 1; }
 .workspace-edge-copy small { font-size: 8px; letter-spacing: 1px; font-weight: 800; color: #c5b5ff; }
-.workspace-edge-copy strong { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.workspace-edge-copy strong { max-width: 135px; overflow: hidden; text-overflow: ellipsis; white-space: normal; font-size: var(--text-xs); line-height: 1.3; }
 .workspace-edge-trigger > span:last-child { color: #d4c9ff; font-size: 19px; }
 .workspace-drawer-layer { position: fixed; inset: 0; z-index: 100; }
 .workspace-drawer-backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: #070a15b8; cursor: default; }
@@ -431,7 +438,7 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .explorer-folder:hover, .explorer-folder.active { border-color: #a995ff84; background: #26213d; }
 .explorer-folder-icon { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; border-radius: 10px; background: #ffffff10; font-size: 20px; }
 .explorer-folder-label { display: grid; gap: 3px; flex: 1; min-width: 0; }
-.explorer-folder-label strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.explorer-folder-label strong { overflow: hidden; text-overflow: ellipsis; white-space: normal; font-size: var(--text-sm); line-height: 1.4; }
 .explorer-folder-label small { color: #9da8be; font-size: 10px; }
 .explorer-folder-progress { flex-shrink: 0; color: #c4b6ff; font: 800 13px Manrope, sans-serif; }
 .explorer-contents { padding-top: 17px; border-top: 1px solid var(--border); }
@@ -463,12 +470,12 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .course-study-context button { flex-shrink: 0; }
 @media (max-width: 700px) {
   .topbar { margin-bottom: 78px; }
-  .workspace-edge-trigger { top: calc(140px + env(safe-area-inset-top)); min-width: 107px; max-width: 130px; min-height: 46px; padding: 6px 9px 6px 6px; gap: 5px; }
+  .workspace-edge-trigger { top: calc(140px + env(safe-area-inset-top)); min-width: 107px; max-width: 160px; min-height: 46px; padding: 6px 9px 6px 6px; gap: 5px; }
   .workspace-edge-icon { width: 30px; height: 30px; flex-basis: 30px; font-size: 16px; }
-  .workspace-edge-copy strong { max-width: 66px; font-size: 11px; }
+  .workspace-edge-copy strong { max-width: 90px; font-size: var(--text-xs); }
   .workspace-edge-copy small { font-size: 7px; }
   .workspace-edge-trigger > span:last-child { font-size: 15px; }
-  .workspace-drawer { width: 100vw; padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+  .workspace-drawer { max-width: calc(100vw - 24px); padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
   .course-study-context { flex-direction: column; align-items: flex-start; }
   .course-study-context button { width: 100%; }
   .course-study-page .material-nav { order: 0; }
@@ -487,7 +494,7 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .solver-heading-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .solver-heading-actions > button { min-height: 42px; }
 .solver-heading .feedback-fab.inline-feedback { position: static; right: auto; bottom: auto; z-index: auto; width: auto; height: 42px; min-height: 42px; padding: 8px 12px; border-radius: 11px; box-shadow: none; }
-.solver-layout { display: grid; grid-template-columns: 222px minmax(0, 1fr); gap: 14px; align-items: stretch; }
+.solver-layout { display: grid; grid-template-columns: 238px minmax(0, 1fr); gap: 18px; align-items: stretch; }
 .solver-layout.no-history { grid-template-columns: minmax(0, 1fr); }
 .solver-history { min-width: 0; height: min(740px, calc(100dvh - 210px)); min-height: 530px; overflow-y: auto; padding: 14px 10px; border: 1px solid var(--border); border-radius: 18px; background: #111725; }
 .solver-history-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 5px 12px; }
@@ -499,27 +506,27 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .solver-thread-list button:hover, .solver-thread-list button.active { border-color: #ad9aff4d; background: #a994ff17; }
 .solver-thread-list button > span:first-child { color: #b9a8ff; font-size: 13px; }
 .solver-thread-list button > span:last-child { min-width: 0; display: grid; gap: 4px; }
-.solver-thread-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 750; }
+.solver-thread-list strong { overflow: hidden; text-overflow: ellipsis; white-space: normal; font-size: var(--text-xs); line-height: 1.4; font-weight: 750; }
 .solver-thread-list small { color: var(--muted); font-size: 9px; }
-.solver-chat { min-width: 0; height: min(740px, calc(100dvh - 210px)); min-height: 530px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #a994ff32; border-radius: 20px; background: #121827; box-shadow: 0 25px 65px #0002; }
-.solver-messages { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 25px clamp(16px, 3vw, 30px); scroll-behavior: smooth; }
+.solver-chat { min-width: 0; min-height: max(600px, calc(100dvh - 190px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid #a994ff32; border-radius: 20px; background: #121827; box-shadow: 0 25px 65px #0002; }
+.solver-messages { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 32px clamp(20px, 3vw, 36px) 38px; scroll-behavior: smooth; }
 .solver-empty { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .solver-empty > span { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 18px; background: #a994ff1b; color: #c9bcff; font-size: 26px; }
 .solver-empty h3 { margin: 15px 0 6px; font: 800 21px Manrope, sans-serif; }
 .solver-empty p { max-width: 410px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .solver-prompts { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin-top: 19px; }
 .solver-prompts button { border: 1px solid #a994ff45; border-radius: 10px; background: #a994ff0e; color: #d3c9ff; padding: 9px 11px; font-size: 11px; cursor: pointer; }
-.solver-turn { display: flex; gap: 11px; width: 100%; margin-bottom: 21px; animation: solverAppear .28s ease both; }
+.solver-turn { display: flex; gap: 11px; width: 100%; margin-bottom: 30px; animation: solverAppear .28s ease both; }
 .solver-turn.user { justify-content: flex-end; }
 .solver-user-bubble { max-width: min(78%, 560px); padding: 12px 16px; border-radius: 17px 17px 4px 17px; background: #7767e7; color: #fff; box-shadow: 0 9px 24px #5548ae30; }
 .solver-user-bubble p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.55; }
 .solver-user-bubble small { display: block; margin-top: 8px; color: #f0eaff; font-size: 10px; }
 .solver-avatar { flex: 0 0 31px; display: grid; place-items: center; width: 31px; height: 31px; border: 1px solid #ad9aff38; border-radius: 10px; background: #a994ff19; color: #c6b9ff; font-size: 16px; }
-.solver-assistant-bubble { min-width: 0; max-width: calc(100% - 42px); flex: 1; padding: 12px 16px 15px; border: 1px solid var(--border); border-radius: 5px 16px 16px 16px; background: #181e2e; }
+.solver-assistant-bubble { min-width: 0; max-width: calc(100% - 42px); flex: 1; padding: 18px 21px 21px; border: 1px solid var(--border); border-radius: 5px 16px 16px 16px; background: #181e2e; }
 .solver-message-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .solver-message-head strong { color: #c7baff; font-size: 11px; }
 .solver-message-head button { border: 0; background: transparent; color: var(--muted); font-size: 10px; cursor: pointer; }
-.solver-answer { min-width: 0; color: #e0e5f1; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.solver-answer { min-width: 0; color: #e0e5f1; font-size: var(--text-md); line-height: 1.75; overflow-wrap: anywhere; }
 .solver-answer p:first-child { margin-top: 0; }
 .solver-answer p:last-child { margin-bottom: 0; }
 .solver-thinking-bubble { display: grid; grid-template-columns: auto 1fr; align-items: center; column-gap: 11px; row-gap: 3px; min-width: 220px; padding: 13px 16px; border: 1px solid #a994ff3b; border-radius: 5px 16px 16px 16px; background: #a994ff0e; }
@@ -552,7 +559,7 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 @keyframes solverAppear { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes solverDot { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-5px); opacity: 1; } }
 @media (max-width: 900px) {
-  .solver-layout { grid-template-columns: 185px minmax(0, 1fr); }
+  .solver-layout { grid-template-columns: 200px minmax(0, 1fr); }
   .solver-heading { align-items: flex-start; flex-direction: column; gap: 10px; }
 }
 @media (max-width: 700px) {
@@ -571,9 +578,10 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
   .solver-history-head { padding: 0 2px 4px; }
   .solver-thread-list { display: flex; gap: 5px; overflow-x: auto; }
   .solver-thread-list button { flex: 0 0 min(185px, 65vw); min-height: 42px; padding: 7px 9px; border-color: var(--border); background: #151b2a; }
-  .solver-chat { height: min(680px, calc(100dvh - 270px)); min-height: 330px; border-radius: 17px; }
-  .solver-layout.has-history .solver-chat { height: min(630px, calc(100dvh - 320px)); min-height: 300px; }
-  .solver-messages { padding: 17px 13px; }
+  .solver-chat { min-height: clamp(460px, 75dvh, 760px); border-radius: 17px; }
+  .solver-layout.has-history .solver-chat { min-height: clamp(440px, 70dvh, 700px); }
+  .solver-messages { padding: 24px 17px 30px; }
+  .solver-assistant-bubble { padding: 17px 18px 19px; }
   .solver-user-bubble { max-width: 87%; }
   .solver-empty > span { display: none; }
   .solver-empty h3 { margin: 0 0 5px; font-size: 17px; }
@@ -586,4 +594,36 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
   .solver-compose-actions .deep-toggle { margin-left: auto; font-size: 9px; }
   .solver-compose-actions .deep-toggle b { max-width: 105px; line-height: 1.2; }
   .quiz-toolbar-actions { justify-content: flex-start; }
+}
+
+/* Shared type steps for secondary copy and compact controls. */
+.sidebar-card small, .course-mini small, .course-list-item small, .material-nav-item small,
+.source-badge, .ai-ready-badge, .folder-list-item small, .folder-course-open small,
+.folder-course-foot > span, .folder-hint p, .feedback-privacy, .feedback-heading p:not(.eyebrow),
+.workspace-menu-title, .workspace-trigger-copy small, .workspace-option small,
+.workspace-edge-copy small, .explorer-toolbar > span, .explorer-contents-head small,
+.explorer-folder-label small, .explorer-course-open small, .solver-thread-list small,
+.solver-empty p, .solver-user-bubble small, .solver-thinking-bubble small,
+.solver-attachments > small, .study-focus-grid button small, .study-level-row > span,
+.study-generating p, .study-ai-error p, .beta-corner, .hero-caption, .pill,
+.art-sheet > span, .art-sheet > div, .art-tag, .story-badge, .preview-top,
+.preview-flow, .preview-flow b, .preview-bottom, .story-footer, .auth-kicker,
+.auth-footnote, .topbar .eyebrow, .mobile-nav .nav-label, .score-chip,
+.space-card-copy small, .spaces-bring button span, .progress-overall span,
+.progress-course-head p, .progress-explainer, .explorer-contents-head > span,
+.explorer-course label, .solver-history > p, .step-count, .folder-course-foot select,
+.confidence, .citations strong, .citations span, .route-breadcrumbs,
+.review-actions span { font-size: var(--text-xs); line-height: 1.5; }
+.solver-history-head strong, .solver-history-head button, .solver-message-head strong,
+.solver-message-head button, .solver-categories button, .solver-attach span,
+.solver-compose-actions .deep-toggle, .solver-prompts button, .workspace-manage,
+.explorer-toolbar > button, .explorer-actions .secondary, .ai-regenerate,
+.study-level-row button, .feedback-type-grid button, .password-field button,
+.course-study-page .mode-tabs button, .quiz-reset, .remove-from-folder,
+.danger-text, .feedback-fab b { font-size: var(--text-xs); }
+.solver-heading p:last-child, .solver-user-bubble p, .solver-composer textarea,
+.answer-text, .feedback-message, .workspace-context { font-size: var(--text-md); }
+.solver-empty p, .folder-hint p, .study-generating p, .study-ai-error p { line-height: 1.6; }
+@media (max-width: 700px) {
+  .panel { padding: 22px 20px; }
 }
