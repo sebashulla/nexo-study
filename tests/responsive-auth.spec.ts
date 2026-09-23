@@ -32,6 +32,26 @@ async function noOverflow(page: Page) {
   expect(dimensions.scroll, `Horizontal overflow: ${JSON.stringify(dimensions)}`).toBeLessThanOrEqual(dimensions.viewport + 1)
 }
 
+test('sidebar can collapse on desktop and opens as a drawer on mobile', async ({ page }) => {
+  await login(page)
+  const width = page.viewportSize()!.width
+  if (width > 950) {
+    await page.getByRole('button', { name: 'Colapsar barra lateral' }).click()
+    await expect(page.locator('.app-shell')).toHaveClass(/sidebar-collapsed/)
+    await expect(page.getByRole('button', { name: 'Expandir barra lateral' })).toBeVisible()
+    await page.reload()
+    await expect(page.locator('.app-shell')).toHaveClass(/sidebar-collapsed/)
+    await page.getByRole('button', { name: 'Expandir barra lateral' }).click()
+    await expect(page.locator('.app-shell')).not.toHaveClass(/sidebar-collapsed/)
+  } else if (width <= 700) {
+    await page.getByRole('button', { name: 'Abrir navegación' }).click()
+    await expect(page.locator('.app-shell')).toHaveClass(/mobile-sidebar-open/)
+    await page.getByRole('button', { name: 'Cerrar navegación' }).last().click()
+    await expect(page.locator('.app-shell')).not.toHaveClass(/mobile-sidebar-open/)
+  }
+  await noOverflow(page)
+})
+
 test('login: validation, password visibility, error, session persistence and sign out', async ({ page }, info) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Qué bueno verte.' })).toBeVisible()

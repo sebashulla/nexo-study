@@ -2,14 +2,15 @@ import { useState } from 'react'
 import { useAuth } from './auth/AuthContext'
 import { supabase } from './lib/supabase'
 import { Dialog } from './Dialog'
+import { Icon } from './Icon'
 
 type FeedbackType = 'idea' | 'bug' | 'experience' | 'other'
 
 const types: { value: FeedbackType; icon: string; label: string }[] = [
-  { value: 'idea', icon: '💡', label: 'Idea' },
-  { value: 'bug', icon: '🛠️', label: 'Algo falló' },
-  { value: 'experience', icon: '✨', label: 'Experiencia' },
-  { value: 'other', icon: '💬', label: 'Otro' },
+  { value: 'idea', icon: 'idea', label: 'Idea' },
+  { value: 'bug', icon: 'bug', label: 'Algo falló' },
+  { value: 'experience', icon: '✦', label: 'Experiencia' },
+  { value: 'other', icon: 'chat', label: 'Otro' },
 ]
 
 export function FeedbackWidget({ context, inline = false }: { context: string; inline?: boolean }) {
@@ -55,12 +56,12 @@ export function FeedbackWidget({ context, inline = false }: { context: string; i
   }
 
   return <>
-    <button className={`feedback-fab ${inline ? 'inline-feedback' : ''}`} onClick={event => { event.currentTarget.focus(); setOpen(true) }} aria-label="Enviar retroalimentación"><span>💬</span><b>Feedback</b></button>
+    <button className={`feedback-fab ${inline ? 'inline-feedback' : ''}`} onClick={event => { event.currentTarget.focus(); setOpen(true) }} aria-label="Enviar retroalimentación"><span><Icon name="chat"/></span><b>Feedback</b></button>
     {open && <Dialog title="Ayúdanos a mejorar Nexo" className="feedback-modal" onClose={close}>
         <button className="feedback-close" onClick={close} aria-label="Cerrar">×</button>
         {!sent ? <>
           <div className="feedback-heading"><span className="feedback-spark">✦</span><div><p className="eyebrow">Nexo Study · Beta</p><h2>Ayúdanos a mejorar Nexo</h2><p>Cuéntanos qué te gustó, qué falló o qué te gustaría encontrar aquí.</p></div></div>
-          <div className="feedback-type-grid">{types.map(item => <button key={item.value} className={kind === item.value ? 'active' : ''} onClick={() => setKind(item.value)}><span>{item.icon}</span>{item.label}</button>)}</div>
+          <div className="feedback-type-grid">{types.map(item => <button key={item.value} className={kind === item.value ? 'active' : ''} onClick={() => setKind(item.value)}><span><Icon name={item.icon}/></span>{item.label}</button>)}</div>
           <div className="feedback-rating"><span>¿Cómo fue tu experiencia?</span><div>{[1,2,3,4,5].map(value => <button key={value} aria-label={`${value} ${value === 1 ? 'estrella' : 'estrellas'}`} aria-pressed={value === rating} className={value <= rating ? 'active' : ''} onClick={() => setRating(value)}>★</button>)}</div></div>
           <label className="feedback-message">Tu comentario<textarea autoFocus rows={6} maxLength={4000} value={message} onChange={event => setMessage(event.target.value)} placeholder="Ej. Me gustaría poder convertir una clase completa en preguntas de examen…" /><small>{message.length}/4000</small></label>
           {error && <div role="alert" className="auth-alert error">{error}</div>}

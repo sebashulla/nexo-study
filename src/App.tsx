@@ -105,11 +105,18 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [flashRevealed, setFlashRevealed] = useState(false)
   const [quizAnswers, setQuizAnswers] = useState<Record<number, number>>({})
   const [showAccountMenu, setShowAccountMenu] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem('nexo-study-sidebar-collapsed') === 'true' }
+    catch { return false }
+  })
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [showWorkspaceDrawer, setShowWorkspaceDrawer] = useState(() => window.location.pathname === '/folders')
   const [signingOut, setSigningOut] = useState(false)
   const [accountError, setAccountError] = useState('')
   const [storageError, setStorageError] = useState('')
   const accountRef = useRef<HTMLDivElement>(null)
+  const sidebarRef = useRef<HTMLElement>(null)
+  const mobileMenuRef = useRef<HTMLButtonElement>(null)
   const [aiGeneratingMaterialId, setAiGeneratingMaterialId] = useState<string | null>(null)
   const [aiGenerationErrors, setAiGenerationErrors] = useState<Record<string, string>>({})
 
@@ -121,12 +128,36 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
 
   const navigate = (path: string, replace = false) => {
     setShowAccountMenu(false)
+    setMobileSidebarOpen(false)
     if (window.location.pathname === path) return
     window.history[replace ? 'replaceState' : 'pushState']({}, '', path)
     setPathname(path)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
   const setTab = (next: AppTab) => navigate(tabPath(next))
+
+  useEffect(() => {
+    try { localStorage.setItem('nexo-study-sidebar-collapsed', String(sidebarCollapsed)) }
+    catch { /* Navigation remains available when storage is disabled. */ }
+  }, [sidebarCollapsed])
+
+  useEffect(() => {
+    if (!mobileSidebarOpen) return
+    sidebarRef.current?.querySelector<HTMLButtonElement>('.sidebar-mobile-close')?.focus()
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setMobileSidebarOpen(false); mobileMenuRef.current?.focus() }
+      if (event.key === 'Tab' && sidebarRef.current) {
+        const focusable = Array.from(sidebarRef.current.querySelectorAll<HTMLButtonElement>('button:not([disabled])')).filter(button => button.offsetParent !== null)
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (!first || !last) return
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+      }
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [mobileSidebarOpen])
 
   useEffect(() => {
     if (pathname === '/folders') { setShowWorkspaceDrawer(true); navigate('/courses', true) }
@@ -314,17 +345,16 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     void prepareMaterialWithAI(activeCourse.id, activeCourse.name, activeMaterial, focus, level)
   }
 
-  const topTitle = route.courseId && activeCourse
-    ? `${activeCourse.emoji} ${activeCourse.name}`
-    : tabTitle(tab)
+  const topTitle = route.materialId ? 'Estudiar' : route.courseId ? 'Curso' : tabTitle(tab)
 
   if (!workspaces.ready) return <div className="app-loading workspace-loading"><BrandLogo iconOnly/><strong>{workspaces.loading ? 'Cargando tus espacios…' : 'No pudimos cargar tus espacios'}</strong>{workspaces.error && <><p>{workspaces.error}</p><button className="primary" onClick={() => workspaces.refresh()}>Reintentar</button></>}</div>
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''}`}>
       <a href="#main-content" className="skip-link">Saltar al contenido</a>
-      <aside className="sidebar">
-        <button className="brand" onClick={() => setTab('inicio')} aria-label="Ir al inicio"><BrandLogo compact/></button>
+      {mobileSidebarOpen && <button className="mobile-sidebar-backdrop" aria-label="Cerrar navegación" onClick={() => { setMobileSidebarOpen(false); mobileMenuRef.current?.focus() }}/>}
+      <aside ref={sidebarRef} className="sidebar" role={mobileSidebarOpen ? 'dialog' : undefined} aria-modal={mobileSidebarOpen || undefined} aria-label="Barra lateral principal">
+        <div className="sidebar-top"><button className="brand" onClick={() => setTab('inicio')} aria-label="Ir al inicio"><BrandLogo compact/></button><button className="sidebar-collapse-toggle" aria-label={sidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(value => !value)}><Icon name={sidebarCollapsed ? 'expand' : 'collapse'}/></button><button className="sidebar-mobile-close" aria-label="Cerrar navegación" onClick={() => { setMobileSidebarOpen(false); mobileMenuRef.current?.focus() }}><Icon name="close"/></button></div>
         <nav aria-label="Navegación principal">
           <NavButton icon="⌂" label="Inicio" active={tab === 'inicio'} onClick={() => setTab('inicio')} />
           <NavButton icon="▦" label="Mis cursos" active={tab === 'cursos'} onClick={() => setTab('cursos')} />
@@ -332,7 +362,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
           <NavButton icon="✎" label="Corrector" active={tab === 'corrector'} onClick={() => setTab('corrector')} />
           <NavButton icon="↗" label="Progreso" active={tab === 'progreso'} onClick={() => setTab('progreso')} />
         </nav>
-        <div className="sidebar-card"><span>✦</span><strong>Un poco cada día.</strong><p>Organiza tus ideas y haz espacio para tu próximo logro.</p><small>Nexo Study · Beta</small></div>
+        <button className="sidebar-profile" aria-label="Abrir perfil" onClick={() => { setMobileSidebarOpen(false); setShowAccountMenu(true); accountRef.current?.querySelector('button')?.focus() }}><span>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</span><strong>{user.user_metadata?.full_name || 'Mi cuenta'}</strong></button>
       </aside>
 
       <WorkspaceSwitcher selected={workspaces.selectedWorkspace} open={showWorkspaceDrawer} onOpenChange={setShowWorkspaceDrawer}>
@@ -340,21 +370,21 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
       </WorkspaceSwitcher>
 
       <main className="main-content" id="main-content" tabIndex={-1}>
-        <header className="topbar"><div><p className="eyebrow">Nexo Study</p><h1>{topTitle}</h1></div><div className="top-actions"><div className="ai-chip"><span className="status-dot"></span><strong>Nexo IA</strong></div><div className="account-wrap" ref={accountRef}><button className="avatar" aria-label="Mi cuenta" aria-expanded={showAccountMenu} aria-controls="account-menu" onClick={() => setShowAccountMenu(value => !value)}>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</button>{showAccountMenu && <div className="account-menu" id="account-menu"><strong>{user.user_metadata?.full_name || 'Estudiante Nexo'}</strong><span>{user.email}</span><button disabled={signingOut} onClick={logout}>{signingOut ? 'Cerrando sesión…' : 'Cerrar sesión'}</button>{accountError && <p role="alert" className="auth-alert error">{accountError}</p>}</div>}</div></div></header>
+        <header className="topbar"><button ref={mobileMenuRef} className="mobile-menu-toggle" aria-label="Abrir navegación" aria-expanded={mobileSidebarOpen} onClick={() => setMobileSidebarOpen(true)}><Icon name="more"/></button><div><p className="eyebrow">Nexo Study</p><h1>{topTitle}</h1></div><div className="top-actions"><div className="ai-chip"><span className="status-dot"></span><strong>Nexo IA</strong></div><div className="account-wrap" ref={accountRef}><button className="avatar" aria-label="Mi cuenta" aria-expanded={showAccountMenu} aria-controls="account-menu" onClick={() => setShowAccountMenu(value => !value)}>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</button>{showAccountMenu && <div className="account-menu" id="account-menu"><strong>{user.user_metadata?.full_name || 'Estudiante Nexo'}</strong><span>{user.email}</span><button disabled={signingOut} onClick={logout}>{signingOut ? 'Cerrando sesión…' : 'Cerrar sesión'}</button>{accountError && <p role="alert" className="auth-alert error">{accountError}</p>}</div>}</div></div></header>
         {workspaces.error && <div role="status" className="workspace-warning">{workspaces.error} Estás viendo la última organización guardada. <button onClick={() => workspaces.refresh()}>Reintentar</button></div>}
         {storageError && <p role="alert" className="auth-alert error">{storageError}</p>}
 
         {(route.courseId || route.materialId) && <div className="route-breadcrumbs"><button onClick={() => navigate('/courses')}>Cursos</button>{activeCourse && <><span>›</span><button onClick={() => navigate(coursePath(activeCourse.id))}>{activeCourse.emoji} {activeCourse.name}</button></>}{route.materialId && activeMaterial && <><span>›</span><strong>{activeMaterial.title}</strong></>}</div>}
 
-        {tab === 'inicio' && <section className="page-grid">
+        {tab === 'inicio' && <section className="page-grid home-page">
           <div className="hero-card"><div><span className="pill">✦ Tu material. Tu manera de aprender.</span><h2>De tus apuntes a tu próximo <em>logro.</em></h2><p>Sube un PDF y encuentra claridad. Resúmenes, flashcards y preguntas para avanzar a tu ritmo.</p><div className="hero-actions"><button className="primary" onClick={() => activeCourse ? setShowMaterialForm(true) : setShowCourseForm(true)}>＋ Subir material</button><button className="secondary" onClick={() => setTab('cursos')}>Ver mis cursos ↗</button></div><div className="hero-caption">ORGANIZA <span>·</span> COMPRENDE <span>·</span> PRACTICA</div></div><div className="hero-study-art" aria-hidden="true"><div className="art-orbit"/><div className="art-sheet art-sheet-back"/><div className="art-sheet"><span>✦ NEXO STUDY</span><h3>Todo empieza<br/>con una idea.</h3><i/><i/><i/><div><b>✓</b> Lista para aprender</div></div><div className="art-tag">✦ De PDF a posibilidades</div></div></div>
           <div className="stats-grid"><Stat label="Cursos" value={`${workspaceCourses.length}`} hint="en este espacio"/><Stat label="Materiales" value={`${totalMaterials}`} hint="guardados"/><Stat label="PDF preparados" value={`${aiPreparedMaterials}`} hint="con Nexo IA"/><Stat label="Avance" value={`${currentProgress.percent}%`} hint="de este espacio"/></div>
-          <section className="panel wide"><div className="section-head"><div><p className="eyebrow">{workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</p><h3>Tus cursos</h3></div><button className="text-button" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>{workspaceCourses.length ? <div className="course-row">{workspaceCourses.map(course => <button className="course-mini" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>›</b></button>)}</div> : <div className="workspace-home-empty"><p>Este espacio todavía no tiene cursos. Usa la pestaña del borde derecho para traer uno.</p></div>}</section>
+          <section className="panel wide home-courses"><div className="section-head"><div><p className="eyebrow">{workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</p><h3>Tus cursos</h3></div><button className="text-button" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>{workspaceCourses.length ? <div className="course-row">{workspaceCourses.map(course => <button className="course-mini" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>›</b></button>)}</div> : <div className="workspace-home-empty"><p>Este espacio todavía no tiene cursos. Usa la pestaña del borde derecho para traer uno.</p></div>}</section>
         </section>}
 
         {tab === 'cursos' && !route.courseId && <section className="course-library-page">
           <div className="library-intro"><div><p className="eyebrow">Biblioteca · {workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</p><h2>Mis cursos</h2><p>Abre un curso para estudiar sus materiales.</p></div><button className="primary" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>
-          {workspaceCourses.length ? <div className="course-library-grid">{workspaceCourses.map(course => <button className="course-library-card" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>Entrar →</b></button>)}</div> : <EmptyState title="Aún no hay cursos aquí" text="Crea uno nuevo o usa la pestaña del borde derecho para traer uno de otro espacio." />}
+          {workspaceCourses.length ? <div className="course-library-grid">{workspaceCourses.map(course => <button className="course-library-card" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales{course.materials.length ? ` · ${workspaceProgress([course], activity).percent}% de avance` : ''}</small></div><b>Entrar →</b></button>)}</div> : <EmptyState title="Aún no hay cursos aquí" text="Crea uno nuevo o usa la pestaña del borde derecho para traer uno de otro espacio." />}
         </section>}
 
         {tab === 'cursos' && route.courseId && !route.materialId && <section className="course-page">

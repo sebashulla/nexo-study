@@ -4,6 +4,7 @@ import { callAI } from './lib/aiClient'
 import { imageLimits, prepareImages, type ImageAttachment } from './lib/imageUtils'
 import { supabase } from './lib/supabase'
 import { ResponseRenderer } from './ResponseRenderer'
+import { Icon } from './Icon'
 
 type ChatMessage = { id: string; role: 'user' | 'assistant'; text: string; createdAt: string; imageCount?: number; remoteId?: string }
 type ChatThread = { id: string; title: string; category: string; deep: boolean; createdAt: string; updatedAt: string; messages: ChatMessage[] }
@@ -13,6 +14,7 @@ type LegacyItem = { id?: string; question: string; category: string; answer: str
 const CHAT_PREFIX = 'nexo-study-resolver-chats-v1:'
 const HISTORY_PREFIX = 'nexo-study-resolver-history-v4:'
 const LEGACY_HISTORY_PREFIX = 'nexo-study-resolver-history-v3:'
+const HISTORY_PANEL_PREFIX = 'nexo-study-resolver-panel:'
 const chatKey = (userId: string, workspaceId: string) => `${CHAT_PREFIX}${userId}:${workspaceId}`
 const newId = () => crypto.randomUUID()
 
@@ -69,9 +71,18 @@ export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; f
   const [error, setError] = useState('')
   const [failedRequest, setFailedRequest] = useState<PendingRequest | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(() => {
+    if (window.matchMedia('(max-width: 700px)').matches) return false
+    try {
+      const saved = user && localStorage.getItem(`${HISTORY_PANEL_PREFIX}${user.id}:${workspaceId}`)
+      return saved === null || saved === undefined ? true : saved === 'true'
+    } catch { return true }
+  })
   const fileRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
+  const historyRef = useRef<HTMLElement>(null)
+  const historyToggleRef = useRef<HTMLButtonElement>(null)
   const activeThread = threads.find(thread => thread.id === activeId)
 
   useEffect(() => {
@@ -79,6 +90,37 @@ export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; f
     try { localStorage.setItem(chatKey(user.id, workspaceId), JSON.stringify(threads.slice(0, 25))) }
     catch { setError('No pudimos guardar esta conversación en el navegador. Libera espacio de almacenamiento.') }
   }, [threads, user, workspaceId])
+
+  useEffect(() => {
+    if (!user || window.matchMedia('(max-width: 700px)').matches) return
+    try { localStorage.setItem(`${HISTORY_PANEL_PREFIX}${user.id}:${workspaceId}`, String(historyOpen)) }
+    catch { /* History stays usable for this session. */ }
+  }, [historyOpen, user, workspaceId])
+
+  useEffect(() => {
+    const mobile = window.matchMedia('(max-width: 700px)')
+    const closeOnMobile = (event: MediaQueryListEvent) => { if (event.matches) setHistoryOpen(false) }
+    mobile.addEventListener('change', closeOnMobile)
+    return () => mobile.removeEventListener('change', closeOnMobile)
+  }, [])
+
+  useEffect(() => {
+    if (!historyOpen || !window.matchMedia('(max-width: 700px)').matches) return
+    historyRef.current?.focus()
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { setHistoryOpen(false); historyToggleRef.current?.focus() }
+      if (event.key === 'Tab' && historyRef.current) {
+        const focusable = Array.from(historyRef.current.querySelectorAll<HTMLButtonElement>('button:not([disabled])')).filter(button => button.offsetParent !== null)
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (!first || !last) return
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === historyRef.current)) { event.preventDefault(); last.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+      }
+    }
+    document.addEventListener('keydown', escape)
+    return () => document.removeEventListener('keydown', escape)
+  }, [historyOpen])
 
   useEffect(() => {
     if (!busy) return
@@ -90,6 +132,13 @@ export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; f
     const list = messageListRef.current
     if (list) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
   }, [activeId, activeThread?.messages.length, thinkingStage, error])
+
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 160)}px`
+  }, [question])
 
   const importImages = async (files: File[]) => {
     if (!files.length) return
@@ -157,6 +206,7 @@ export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; f
   const openThread = (thread: ChatThread) => {
     if (busy) return
     setActiveId(thread.id); setCategory(thread.category); setDeep(thread.deep); setQuestion(''); setImages([]); setError(''); setFailedRequest(null)
+    if (window.matchMedia('(max-width: 700px)').matches) setHistoryOpen(false)
   }
 
   const copyAnswer = async (message: ChatMessage) => {
@@ -177,9 +227,10 @@ export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; f
     : ['Pensando en tu pregunta…', 'Relacionando los conceptos…', 'Preparando una explicación clara…']
 
   return <section className="solver-shell">
-    <div className="solver-heading"><div><p className="eyebrow">Nexo IA · Resolver</p><h2>Una conversación para entenderlo.</h2><p>Pregunta, adjunta imágenes y sigue profundizando en la misma conversación.</p></div><div className="solver-heading-actions">{activeThread && <button className="secondary" onClick={startNew} disabled={busy}>＋ Nuevo chat</button>}{feedback}</div></div>
-    <div className={`solver-layout ${threads.length ? 'has-history' : 'no-history'}`}>
-      {threads.length > 0 && <aside className="solver-history" aria-label="Conversaciones recientes"><div className="solver-history-head"><strong>Conversaciones</strong><button onClick={clearHistory} disabled={busy}>Limpiar</button></div><div className="solver-thread-list">{threads.slice(0, 25).map(thread => <button key={thread.id} className={activeId === thread.id ? 'active' : ''} onClick={() => openThread(thread)} disabled={busy}><span>✦</span><span><strong>{thread.title}</strong><small>{thread.category} · {thread.messages.filter(message => message.role === 'assistant').length} respuestas</small></span></button>)}</div></aside>}
+    <div className="solver-heading"><p className="solver-subtitle">Pregunta, adjunta imágenes y sigue profundizando en la misma conversación.</p><div className="solver-heading-actions">{threads.length > 0 && <button ref={historyToggleRef} className="secondary solver-history-toggle" aria-controls="solver-history" aria-expanded={historyOpen} onClick={() => setHistoryOpen(value => !value)}>{historyOpen ? 'Ocultar conversaciones' : 'Mostrar conversaciones'}</button>}{activeThread && <button className="secondary" onClick={startNew} disabled={busy}>＋ Nuevo chat</button>}{feedback}</div></div>
+    {historyOpen && threads.length > 0 && <button className="solver-history-backdrop" aria-label="Cerrar conversaciones" onClick={() => { setHistoryOpen(false); historyToggleRef.current?.focus() }}/>}
+    <div className={`solver-layout ${threads.length ? 'has-history' : 'no-history'} ${historyOpen ? 'history-open' : 'history-hidden'}`}>
+      {historyOpen && threads.length > 0 && <aside ref={historyRef} className="solver-history" id="solver-history" role={window.matchMedia('(max-width: 700px)').matches ? 'dialog' : undefined} aria-modal={window.matchMedia('(max-width: 700px)').matches ? true : undefined} aria-label="Conversaciones recientes" tabIndex={-1}><div className="solver-history-head"><strong>Conversaciones</strong><button onClick={clearHistory} disabled={busy}>Limpiar</button><button className="solver-history-close" aria-label="Cerrar conversaciones" onClick={() => { setHistoryOpen(false); historyToggleRef.current?.focus() }}><Icon name="close"/></button></div><div className="solver-thread-list">{threads.slice(0, 25).map(thread => <button key={thread.id} className={activeId === thread.id ? 'active' : ''} onClick={() => openThread(thread)} disabled={busy}><span>✦</span><span><strong>{thread.title}</strong><small>{thread.category} · {thread.messages.filter(message => message.role === 'assistant').length} respuestas</small></span></button>)}</div></aside>}
       <div className="solver-chat"><div className="solver-messages" ref={messageListRef} aria-label="Conversación con Nexo IA">
         {activeThread?.messages.length ? activeThread.messages.map(message => message.role === 'user'
           ? <div className="solver-turn user" key={message.id}><div className="solver-user-bubble"><p>{message.text}</p>{Boolean(message.imageCount) && <small>📎 {message.imageCount} {message.imageCount === 1 ? 'imagen' : 'imágenes'}</small>}</div></div>
@@ -192,8 +243,8 @@ export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; f
         <div className="solver-categories" role="group" aria-label="Materia">{categories.map(item => <button key={item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)} disabled={busy}>{item}</button>)}</div>
         <input ref={fileRef} hidden multiple type="file" accept="image/png,image/jpeg,image/webp" onChange={event => void importImages(Array.from(event.target.files || []))}/>
         {images.length > 0 && <div className="solver-attachments">{images.map((image, index) => <div key={image.id}><img src={image.dataUrl} alt={`Adjunto ${index + 1}`}/><button aria-label={`Quitar ${image.name}`} onClick={() => setImages(current => current.filter(item => item.id !== image.id))}>×</button></div>)}<small>{images.length}/{imageLimits.maxImages} imágenes</small></div>}
-        <textarea ref={textareaRef} aria-label="Escribe tu pregunta" rows={3} placeholder="Pregunta lo que quieras resolver…" value={question} onChange={event => setQuestion(event.target.value)} onPaste={event => { const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/')); if (files.length) { event.preventDefault(); void importImages(files) } }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send() } }}/>
-        <div className="solver-compose-actions"><button className="solver-attach" onClick={() => fileRef.current?.click()} disabled={busy || imageBusy || images.length >= imageLimits.maxImages} aria-label="Adjuntar imágenes">📎 <span>{imageBusy ? 'Preparando…' : 'Adjuntar imágenes'}</span></button><label className="deep-toggle"><input type="checkbox" checked={deep} onChange={event => setDeep(event.target.checked)} disabled={busy}/><span/><b>Razonamiento reforzado</b></label><button className="solver-send" onClick={send} disabled={busy || imageBusy || (!question.trim() && images.length === 0)} aria-label="Enviar pregunta">{busy ? '···' : '↑'}</button></div>
+        <textarea ref={textareaRef} aria-label="Escribe tu pregunta" rows={2} placeholder="Pregunta lo que quieras resolver…" value={question} onChange={event => setQuestion(event.target.value)} onPaste={event => { const files = Array.from(event.clipboardData.files).filter(file => file.type.startsWith('image/')); if (files.length) { event.preventDefault(); void importImages(files) } }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send() } }}/>
+        <div className="solver-compose-actions"><button className="solver-attach" onClick={() => fileRef.current?.click()} disabled={busy || imageBusy || images.length >= imageLimits.maxImages} aria-label="Adjuntar imágenes"><Icon name="paperclip"/><span>{imageBusy ? 'Preparando…' : 'Adjuntar imágenes'}</span></button><label className="deep-toggle"><input type="checkbox" checked={deep} onChange={event => setDeep(event.target.checked)} disabled={busy}/><span/><b>Razonamiento reforzado</b></label><button className="solver-send" onClick={send} disabled={busy || imageBusy || (!question.trim() && images.length === 0)} aria-label="Enviar pregunta">{busy ? '···' : '↑'}</button></div>
       </div></div>
     </div>
   </section>

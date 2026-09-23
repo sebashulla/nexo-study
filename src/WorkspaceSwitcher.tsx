@@ -31,7 +31,7 @@ export function WorkspaceSwitcher({ selected, open, onOpenChange, children }: {
   }, [open, onOpenChange])
 
   return <>
-    <button ref={triggerRef} className="workspace-edge-trigger" aria-label={`Cambiar espacio de estudio. Actual: ${selected.name}`} aria-expanded={open} aria-controls="workspace-drawer" onClick={() => onOpenChange(!open)}>
+    <button ref={triggerRef} className="workspace-edge-trigger" title={`Explorador de espacios · ${selected.name}`} aria-label={`Cambiar espacio de estudio. Actual: ${selected.name}`} aria-expanded={open} aria-controls="workspace-drawer" onClick={() => onOpenChange(!open)}>
       <span className="workspace-edge-icon">{selected.emoji}</span><span className="workspace-edge-copy"><small>TU ESPACIO</small><strong>{selected.name}</strong></span><span aria-hidden="true">{open ? '×' : '‹'}</span>
     </button>
     {open && <div className="workspace-drawer-layer"><button className="workspace-drawer-backdrop" aria-label="Cerrar explorador de espacios" onClick={() => onOpenChange(false)}/><aside ref={drawerRef} className="workspace-drawer" id="workspace-drawer" role="dialog" aria-modal="true" aria-label="Explorador de espacios" tabIndex={-1}><header className="workspace-drawer-head"><div><p className="eyebrow">Organiza tu estudio</p><h2>Explorador de espacios</h2><span>Abre un espacio y organiza sus cursos.</span></div><button className="workspace-drawer-close" aria-label="Cerrar explorador de espacios" onClick={() => { onOpenChange(false); triggerRef.current?.focus() }}>×</button></header>{children}</aside></div>}
