@@ -1,37 +1,39 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import type { StudyWorkspace } from './lib/workspaces'
-import { GENERAL_WORKSPACE } from './lib/workspaces'
 
-export function WorkspaceSwitcher({ selected, folders, counts, onSelect, onManage }: {
+export function WorkspaceSwitcher({ selected, open, onOpenChange, children }: {
   selected: StudyWorkspace
-  folders: StudyWorkspace[]
-  counts: Record<string, number>
-  onSelect: (id: string) => void
-  onManage: () => void
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  children: ReactNode
 }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const drawerRef = useRef<HTMLElement>(null)
+
   useEffect(() => {
     if (!open) return
-    const outside = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false) }
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setOpen(false); ref.current?.querySelector('button')?.focus() } }
-    document.addEventListener('pointerdown', outside)
-    document.addEventListener('keydown', escape)
-    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape) }
-  }, [open])
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { onOpenChange(false); triggerRef.current?.focus() }
+      if (event.key === 'Tab' && drawerRef.current) {
+        const focusable = Array.from(drawerRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]'))
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (!first || !last) return
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === drawerRef.current)) { event.preventDefault(); last.focus() }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+      }
+    }
+    const oldOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    drawerRef.current?.focus()
+    document.addEventListener('keydown', keyboard)
+    return () => { document.body.style.overflow = oldOverflow; document.removeEventListener('keydown', keyboard) }
+  }, [open, onOpenChange])
 
-  const choose = (id: string) => { onSelect(id); setOpen(false) }
-  return <div className="workspace-switcher" ref={ref}>
-    <button className="workspace-trigger" aria-label={`Cambiar espacio de estudio. Actual: ${selected.name}`} aria-expanded={open} aria-controls="workspace-options" onClick={() => setOpen(value => !value)}>
-      <span className="workspace-trigger-icon">{selected.emoji}</span><span className="workspace-trigger-copy"><small>ESPACIO ACTIVO</small><strong>{selected.name}</strong></span><span className="workspace-chevron" aria-hidden="true">⌄</span>
+  return <>
+    <button ref={triggerRef} className="workspace-edge-trigger" aria-label={`Cambiar espacio de estudio. Actual: ${selected.name}`} aria-expanded={open} aria-controls="workspace-drawer" onClick={() => onOpenChange(!open)}>
+      <span className="workspace-edge-icon">{selected.emoji}</span><span className="workspace-edge-copy"><small>TU ESPACIO</small><strong>{selected.name}</strong></span><span aria-hidden="true">{open ? '×' : '‹'}</span>
     </button>
-    {open && <div className="workspace-menu" id="workspace-options" role="group" aria-label="Espacios de estudio">
-      <div className="workspace-menu-title">Cambiar de espacio</div>
-      {[{ id: GENERAL_WORKSPACE, name: 'General', emoji: '🏠', created_at: '' }, ...folders].map(item =>
-        <button key={item.id} className={`workspace-option ${selected.id === item.id ? 'active' : ''}`} aria-current={selected.id === item.id ? 'true' : undefined} onClick={() => choose(item.id)}>
-          <span>{item.emoji}</span><span><strong>{item.name}</strong><small>{counts[item.id] ?? 0} cursos</small></span>{selected.id === item.id && <b aria-hidden="true">✓</b>}
-        </button>)}
-      <button className="workspace-manage" onClick={() => { setOpen(false); onManage() }}>＋ Organizar espacios</button>
-    </div>}
-  </div>
+    {open && <div className="workspace-drawer-layer"><button className="workspace-drawer-backdrop" aria-label="Cerrar explorador de espacios" onClick={() => onOpenChange(false)}/><aside ref={drawerRef} className="workspace-drawer" id="workspace-drawer" role="dialog" aria-modal="true" aria-label="Explorador de espacios" tabIndex={-1}><header className="workspace-drawer-head"><div><p className="eyebrow">Organiza tu estudio</p><h2>Explorador de espacios</h2><span>Abre un espacio y organiza sus cursos.</span></div><button className="workspace-drawer-close" aria-label="Cerrar explorador de espacios" onClick={() => { onOpenChange(false); triggerRef.current?.focus() }}>×</button></header>{children}</aside></div>}
+  </>
 }

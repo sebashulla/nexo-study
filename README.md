@@ -8,12 +8,10 @@ V0.8 convierte la zona de estudio en una navegación real por rutas y conecta lo
   - `/courses`
   - `/courses/:courseId`
   - `/courses/:courseId/materials/:materialId`
-  - `/folders`
   - `/resolver`
   - `/corrector`
-  - `/study`
   - `/progress`
-- Cada curso tiene su propia página y cada material abre una sesión de estudio independiente.
+- Cada curso tiene su propia página y cada material abre su sesión dentro del curso. Las rutas antiguas `/folders` y `/study` se redirigen a `/courses`; la primera abre el explorador lateral.
 - Al guardar un PDF, Nexo IA genera automáticamente:
   - resumen de ideas clave,
   - palabras/conceptos importantes,
@@ -67,9 +65,9 @@ La migración 006 exige que la cuenta `@sebasshulla` ya exista. Si no existe exa
 
 ## Espacios de estudio
 
-El selector de la derecha activa un solo espacio a la vez. **General** contiene los cursos sin carpeta; cada espacio creado contiene únicamente los cursos asignados allí. Inicio, Mis cursos, Estudiar y Progreso muestran el contenido del espacio activo. Los cursos nuevos se crean dentro de ese espacio y los enlaces directos a un curso activan automáticamente el espacio que le corresponde.
+La pestaña fija del borde derecho abre el explorador de espacios. **General** contiene los cursos sin carpeta; cada espacio creado contiene únicamente los cursos asignados allí. Inicio, Mis cursos y Progreso muestran el contenido del espacio activo. Los cursos nuevos se crean dentro de ese espacio y los enlaces directos a un curso activan automáticamente el espacio que le corresponde.
 
-En **Espacios** puedes crear uno, traer cursos existentes, moverlos entre espacios o eliminar un espacio. Al eliminarlo, sus cursos regresan a General. El avance se calcula a partir de resúmenes abiertos, tarjetas reveladas y preguntas respondidas; sigue al curso cuando se mueve. El historial visible de Resolver también se guarda por espacio en este navegador.
+En el explorador puedes crear un espacio, traer cursos existentes, moverlos entre carpetas o eliminar un espacio. Al eliminarlo, sus cursos regresan a General. Cada material se estudia dentro de su curso, con resumen, flashcards, quiz, simulacro y tutor en la misma vista. El avance se calcula a partir de resúmenes abiertos, tarjetas reveladas y preguntas respondidas; sigue al curso cuando se mueve. El historial visible de Resolver también se guarda por espacio en este navegador.
 
 Como cursos y avance siguen siendo locales al navegador, cambiar de dispositivo no sincroniza estos datos todavía.
 

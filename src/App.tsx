@@ -84,12 +84,6 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const workspaces = useWorkspaces(user.id)
   const [activity, setActivity] = useState<StudyActivity>(() => loadStudyActivity(user.id))
   const workspaceCourses = useMemo(() => coursesInWorkspace(courses, workspaces.memberships, workspaces.selectedId), [courses, workspaces.memberships, workspaces.selectedId])
-  const workspaceCounts = useMemo(() => {
-    const counts: Record<string, number> = { [GENERAL_WORKSPACE]: 0 }
-    workspaces.folders.forEach(folder => { counts[folder.id] = 0 })
-    courses.forEach(course => { const id = workspaceForCourse(course.id, workspaces.memberships); counts[id] = (counts[id] ?? 0) + 1 })
-    return counts
-  }, [courses, workspaces.folders, workspaces.memberships])
   const [activeCourseId, setActiveCourseId] = useState(route.courseId || courses[0]?.id || '')
   const [activeMaterialId, setActiveMaterialId] = useState(route.materialId || courses[0]?.materials[0]?.id || '')
   const [showCourseForm, setShowCourseForm] = useState(false)
@@ -112,7 +106,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [quizAnswers, setQuizAnswers] = useState<Record<number, number>>({})
   const [examAnswers, setExamAnswers] = useState<Record<number, number>>({})
   const [showAccountMenu, setShowAccountMenu] = useState(false)
-  const [showMobileMenu, setShowMobileMenu] = useState(false)
+  const [showWorkspaceDrawer, setShowWorkspaceDrawer] = useState(() => window.location.pathname === '/folders')
   const [signingOut, setSigningOut] = useState(false)
   const [accountError, setAccountError] = useState('')
   const [storageError, setStorageError] = useState('')
@@ -121,13 +115,12 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [aiGenerationErrors, setAiGenerationErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    const onPopState = () => { setPathname(window.location.pathname); setShowMobileMenu(false); setShowAccountMenu(false) }
+    const onPopState = () => { setPathname(window.location.pathname); setShowAccountMenu(false) }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
   const navigate = (path: string, replace = false) => {
-    setShowMobileMenu(false)
     setShowAccountMenu(false)
     if (window.location.pathname === path) return
     window.history[replace ? 'replaceState' : 'pushState']({}, '', path)
@@ -135,6 +128,11 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
   const setTab = (next: AppTab) => navigate(tabPath(next))
+
+  useEffect(() => {
+    if (pathname === '/folders') { setShowWorkspaceDrawer(true); navigate('/courses', true) }
+    else if (pathname === '/study') navigate('/courses', true)
+  }, [pathname])
 
   useEffect(() => {
     try { localStorage.setItem(`${STORAGE_PREFIX}${user.id}`, JSON.stringify(courses)); setStorageError('') }
@@ -185,10 +183,10 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   useEffect(() => { setQuizAnswers({}); setExamAnswers({}); setFlashIndex(0); setFlashRevealed(false) }, [activeMaterial?.id])
 
   useEffect(() => {
-    if (tab === 'estudiar' && studyMode === 'summary' && activeMaterial && !activity[activeMaterial.id]?.summaryViewed) {
+    if (route.materialId && studyMode === 'summary' && activeMaterial && !activity[activeMaterial.id]?.summaryViewed) {
       recordActivity(activeMaterial.id, value => ({ ...value, summaryViewed: true }))
     }
-  }, [tab, studyMode, activeMaterial?.id, activity, recordActivity])
+  }, [route.materialId, studyMode, activeMaterial?.id, activity, recordActivity])
 
   useEffect(() => {
     if (!activeCourse) return
@@ -306,10 +304,10 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     setActiveCourseId(courseId); setActiveMaterialId(materialId); resetStudy(); navigate(materialPath(courseId, materialId))
   }
 
-  const switchWorkspace = (id: string, stayOnPage = false) => {
+  const switchWorkspace = (id: string) => {
     workspaces.setSelectedId(id)
     setActiveCourseId(''); setActiveMaterialId(''); resetStudy()
-    if (!stayOnPage) navigate('/')
+    navigate('/courses')
   }
 
   const regenerateActiveMaterial = () => {
@@ -319,11 +317,9 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     void prepareMaterialWithAI(activeCourse.id, activeCourse.name, activeMaterial, focus, level)
   }
 
-  const topTitle = route.courseId && tab === 'cursos' && activeCourse
+  const topTitle = route.courseId && activeCourse
     ? `${activeCourse.emoji} ${activeCourse.name}`
-    : route.materialId && activeMaterial
-      ? activeMaterial.title
-      : tabTitle(tab)
+    : tabTitle(tab)
 
   if (!workspaces.ready) return <div className="app-loading workspace-loading"><BrandLogo iconOnly/><strong>{workspaces.loading ? 'Cargando tus espacios…' : 'No pudimos cargar tus espacios'}</strong>{workspaces.error && <><p>{workspaces.error}</p><button className="primary" onClick={() => workspaces.refresh()}>Reintentar</button></>}</div>
 
@@ -335,46 +331,46 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
         <nav aria-label="Navegación principal">
           <NavButton icon="⌂" label="Inicio" active={tab === 'inicio'} onClick={() => setTab('inicio')} />
           <NavButton icon="▦" label="Mis cursos" active={tab === 'cursos'} onClick={() => setTab('cursos')} />
-          <NavButton icon="▱" label="Espacios" active={tab === 'carpetas'} onClick={() => setTab('carpetas')} />
           <NavButton icon="⌁" label="Resolver" active={tab === 'resolver'} onClick={() => setTab('resolver')} />
           <NavButton icon="✎" label="Corrector" active={tab === 'corrector'} onClick={() => setTab('corrector')} />
-          <NavButton icon="✦" label="Estudiar" active={tab === 'estudiar'} onClick={() => setTab('estudiar')} />
           <NavButton icon="↗" label="Progreso" active={tab === 'progreso'} onClick={() => setTab('progreso')} />
         </nav>
         <div className="sidebar-card"><span>✦</span><strong>Un poco cada día.</strong><p>Organiza tus ideas y haz espacio para tu próximo logro.</p><small>Nexo Study · Beta</small></div>
       </aside>
 
+      <WorkspaceSwitcher selected={workspaces.selectedWorkspace} open={showWorkspaceDrawer} onOpenChange={setShowWorkspaceDrawer}>
+        <FoldersPage allCourses={courses} folders={workspaces.folders} memberships={workspaces.memberships} selected={workspaces.selectedWorkspace} activity={activity} onSelect={switchWorkspace} onCreate={async (name, emoji) => { const created = await workspaces.createWorkspace(name, emoji); navigate('/courses'); return created }} onMove={workspaces.moveCourse} onDelete={workspaces.deleteWorkspace} onOpenCourse={id => { setShowWorkspaceDrawer(false); openCourse(id) }} />
+      </WorkspaceSwitcher>
+
       <main className="main-content" id="main-content" tabIndex={-1}>
-        <header className="topbar"><div><p className="eyebrow">Tu espacio de estudio</p><h1>{topTitle}</h1></div><div className="top-actions"><WorkspaceSwitcher selected={workspaces.selectedWorkspace} folders={workspaces.folders} counts={workspaceCounts} onSelect={id => switchWorkspace(id)} onManage={() => setTab('carpetas')}/><div className="ai-chip"><span className="status-dot"></span><strong>Nexo IA</strong></div><div className="account-wrap" ref={accountRef}><button className="avatar" aria-label="Mi cuenta" aria-expanded={showAccountMenu} aria-controls="account-menu" onClick={() => setShowAccountMenu(value => !value)}>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</button>{showAccountMenu && <div className="account-menu" id="account-menu"><strong>{user.user_metadata?.full_name || 'Estudiante Nexo'}</strong><span>{user.email}</span><button disabled={signingOut} onClick={logout}>{signingOut ? 'Cerrando sesión…' : 'Cerrar sesión'}</button>{accountError && <p role="alert" className="auth-alert error">{accountError}</p>}</div>}</div></div></header>
+        <header className="topbar"><div><p className="eyebrow">Nexo Study</p><h1>{topTitle}</h1></div><div className="top-actions"><div className="ai-chip"><span className="status-dot"></span><strong>Nexo IA</strong></div><div className="account-wrap" ref={accountRef}><button className="avatar" aria-label="Mi cuenta" aria-expanded={showAccountMenu} aria-controls="account-menu" onClick={() => setShowAccountMenu(value => !value)}>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</button>{showAccountMenu && <div className="account-menu" id="account-menu"><strong>{user.user_metadata?.full_name || 'Estudiante Nexo'}</strong><span>{user.email}</span><button disabled={signingOut} onClick={logout}>{signingOut ? 'Cerrando sesión…' : 'Cerrar sesión'}</button>{accountError && <p role="alert" className="auth-alert error">{accountError}</p>}</div>}</div></div></header>
         {workspaces.error && <div role="status" className="workspace-warning">{workspaces.error} Estás viendo la última organización guardada. <button onClick={() => workspaces.refresh()}>Reintentar</button></div>}
         {storageError && <p role="alert" className="auth-alert error">{storageError}</p>}
 
         {(route.courseId || route.materialId) && <div className="route-breadcrumbs"><button onClick={() => navigate('/courses')}>Cursos</button>{activeCourse && <><span>›</span><button onClick={() => navigate(coursePath(activeCourse.id))}>{activeCourse.emoji} {activeCourse.name}</button></>}{route.materialId && activeMaterial && <><span>›</span><strong>{activeMaterial.title}</strong></>}</div>}
 
         {tab === 'inicio' && <section className="page-grid">
-          <div className="workspace-context"><span>{workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</span><span>Solo el contenido de este espacio</span></div>
           <div className="hero-card"><div><span className="pill">✦ Tu material. Tu manera de aprender.</span><h2>De tus apuntes a tu próximo <em>logro.</em></h2><p>Sube un PDF y encuentra claridad. Resúmenes, flashcards y preguntas para avanzar a tu ritmo.</p><div className="hero-actions"><button className="primary" onClick={() => activeCourse ? setShowMaterialForm(true) : setShowCourseForm(true)}>＋ Subir material</button><button className="secondary" onClick={() => setTab('cursos')}>Ver mis cursos ↗</button></div><div className="hero-caption">ORGANIZA <span>·</span> COMPRENDE <span>·</span> PRACTICA</div></div><div className="hero-study-art" aria-hidden="true"><div className="art-orbit"/><div className="art-sheet art-sheet-back"/><div className="art-sheet"><span>✦ NEXO STUDY</span><h3>Todo empieza<br/>con una idea.</h3><i/><i/><i/><div><b>✓</b> Lista para aprender</div></div><div className="art-tag">✦ De PDF a posibilidades</div></div></div>
           <div className="stats-grid"><Stat label="Cursos" value={`${workspaceCourses.length}`} hint="en este espacio"/><Stat label="Materiales" value={`${totalMaterials}`} hint="guardados"/><Stat label="PDF preparados" value={`${aiPreparedMaterials}`} hint="con Nexo IA"/><Stat label="Avance" value={`${currentProgress.percent}%`} hint="de este espacio"/></div>
-          <section className="panel wide"><div className="section-head"><div><p className="eyebrow">Continúa en {workspaces.selectedWorkspace.name}</p><h3>Tus cursos</h3></div><button className="text-button" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>{workspaceCourses.length ? <div className="course-row">{workspaceCourses.map(course => <button className="course-mini" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>›</b></button>)}</div> : <div className="workspace-home-empty"><p>Este espacio todavía no tiene cursos.</p><button className="secondary" onClick={() => setTab('carpetas')}>Traer un curso existente</button></div>}</section>
+          <section className="panel wide"><div className="section-head"><div><p className="eyebrow">{workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</p><h3>Tus cursos</h3></div><button className="text-button" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>{workspaceCourses.length ? <div className="course-row">{workspaceCourses.map(course => <button className="course-mini" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>›</b></button>)}</div> : <div className="workspace-home-empty"><p>Este espacio todavía no tiene cursos. Usa la pestaña del borde derecho para traer uno.</p></div>}</section>
         </section>}
 
         {tab === 'cursos' && !route.courseId && <section className="course-library-page">
-          <div className="library-intro"><div><p className="eyebrow">Biblioteca · {workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</p><h2>Mis cursos en este espacio</h2><p>Aquí solo aparecen los cursos que pertenecen a {workspaces.selectedWorkspace.name}.</p></div><button className="primary" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>
-          {workspaceCourses.length ? <div className="course-library-grid">{workspaceCourses.map(course => <button className="course-library-card" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>Entrar →</b></button>)}</div> : <EmptyState title="Aún no hay cursos aquí" text="Crea uno nuevo o trae un curso desde otro espacio." action="Organizar espacios" onClick={() => setTab('carpetas')} />}
+          <div className="library-intro"><div><p className="eyebrow">Biblioteca · {workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</p><h2>Mis cursos</h2><p>Abre un curso para estudiar sus materiales.</p></div><button className="primary" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>
+          {workspaceCourses.length ? <div className="course-library-grid">{workspaceCourses.map(course => <button className="course-library-card" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>Entrar →</b></button>)}</div> : <EmptyState title="Aún no hay cursos aquí" text="Crea uno nuevo o usa la pestaña del borde derecho para traer uno de otro espacio." />}
         </section>}
 
-        {tab === 'cursos' && route.courseId && <section className="course-page">
+        {tab === 'cursos' && route.courseId && !route.materialId && <section className="course-page">
           {activeCourse ? <>
             <div className="course-page-hero"><div className="course-page-emoji">{activeCourse.emoji}</div><div><p className="eyebrow">Curso</p><h2>{activeCourse.name}</h2><p>{activeCourse.materials.length} materiales · Cada PDF puede convertirse automáticamente en una sesión activa.</p></div><button className="primary" onClick={() => setShowMaterialForm(true)}>+ Agregar material</button></div>
-            {activeCourse.materials.length ? <div className="materials-grid course-materials-grid">{activeCourse.materials.map(material => <button className="material-card" key={material.id} onClick={() => openMaterial(activeCourse.id, material.id)}><div className="material-meta"><span className="file-icon">{material.sourceType === 'pdf' ? 'PDF' : '≡'}</span>{material.pages?.length ? <span className="source-badge">{material.pages.length} págs.</span> : null}{material.studyPackMeta?.source === 'nexo-ai' && <span className="ai-ready-badge">✦ IA lista</span>}</div><strong>{material.title}</strong><p>{material.text.replace(/\[Página \d+\]/g, '').slice(0, 125)}{material.text.length > 125 ? '…' : ''}</p><small>Entrar a la sesión →</small></button>)}</div> : <EmptyState title="Todavía no hay materiales" text="Sube un PDF. Nexo IA generará el primer paquete de estudio automáticamente." action="Agregar material" onClick={() => setShowMaterialForm(true)} />}
+            {activeCourse.materials.length ? <div className="materials-grid course-materials-grid">{activeCourse.materials.map(material => <button className="material-card" key={material.id} onClick={() => openMaterial(activeCourse.id, material.id)}><div className="material-meta"><span className="file-icon">{material.sourceType === 'pdf' ? 'PDF' : '≡'}</span>{material.pages?.length ? <span className="source-badge">{material.pages.length} págs.</span> : null}{material.studyPackMeta?.source === 'nexo-ai' && <span className="ai-ready-badge">✦ IA lista</span>}</div><strong>{material.title}</strong><p>{material.text.replace(/\[Página \d+\]/g, '').slice(0, 125)}{material.text.length > 125 ? '…' : ''}</p><small>Estudiar material →</small></button>)}</div> : <EmptyState title="Todavía no hay materiales" text="Sube un PDF. Nexo IA generará el primer paquete de estudio automáticamente." action="Agregar material" onClick={() => setShowMaterialForm(true)} />}
           </> : <EmptyState title="Curso no encontrado" text="Este curso no existe en este dispositivo." action="Volver a cursos" onClick={() => navigate('/courses')} />}
         </section>}
 
-        {tab === 'carpetas' && <FoldersPage allCourses={courses} folders={workspaces.folders} memberships={workspaces.memberships} selected={workspaces.selectedWorkspace} activity={activity} onSelect={id => switchWorkspace(id, true)} onCreate={workspaces.createWorkspace} onMove={workspaces.moveCourse} onDelete={workspaces.deleteWorkspace} onOpenCourse={openCourse} />}
         {tab === 'resolver' && <ResolverPage key={workspaces.selectedId} workspaceId={workspaces.selectedId} />}
         {tab === 'corrector' && <CorrectorPage key={workspaces.selectedId} />}
 
-        {tab === 'estudiar' && <section className="study-layout">
+        {tab === 'cursos' && route.materialId && <section className="course-study-page"><div className="course-study-context"><div><p className="eyebrow">Dentro de {activeCourse?.name ?? 'tu curso'}</p><h2>Estudia este material</h2></div><button className="secondary" onClick={() => activeCourse && navigate(coursePath(activeCourse.id))}>← Ver todos los materiales</button></div><div className="study-layout">
           <aside className="panel material-nav"><div className="section-head compact"><div><p className="eyebrow">Material</p><h3>{activeCourse?.name ?? 'Curso'}</h3></div></div>{activeCourse?.materials.map(material => <button key={material.id} className={`material-nav-item ${activeMaterial?.id === material.id ? 'active' : ''}`} onClick={() => openMaterial(activeCourse.id, material.id)}><span>{material.sourceType === 'pdf' ? 'P' : '≡'}</span><div><strong>{material.title}</strong><small>{material.studyPackMeta?.source === 'nexo-ai' ? '✦ Preparado por Nexo IA' : material.pages?.length ? `${material.pages.length} páginas` : `${material.text.length} caracteres`}</small></div></button>)}<button className="secondary full" onClick={() => setShowMaterialForm(true)}>+ Agregar material</button></aside>
           <div className="panel study-stage">{pack && quickPack && examPack && activeMaterial ? <>
             <div className="study-heading"><div><p className="eyebrow">Sesión de estudio</p><h2>{activeMaterial.title}</h2>{activeMaterial.sourceName && <small className="source-line">{activeMaterial.sourceType === 'pdf' ? '📄' : '📝'} {activeMaterial.sourceName}</small>}</div><div className="study-heading-actions"><button className="secondary ai-regenerate" disabled={aiGeneratingMaterialId === activeMaterial.id} onClick={regenerateActiveMaterial}>{aiGeneratingMaterialId === activeMaterial.id ? '✦ Preparando…' : '✦ Regenerar con Nexo IA'}</button><div className="mode-tabs"><button className={studyMode === 'summary' ? 'active' : ''} onClick={() => setStudyMode('summary')}>Resumen</button><button className={studyMode === 'flashcards' ? 'active' : ''} onClick={() => setStudyMode('flashcards')}>Flashcards</button><button className={studyMode === 'quiz' ? 'active' : ''} onClick={() => setStudyMode('quiz')}>Quiz</button><button className={studyMode === 'exam' ? 'active' : ''} onClick={() => setStudyMode('exam')}>Simulacro</button><button className={studyMode === 'tutor' ? 'active' : ''} onClick={() => setStudyMode('tutor')}>Tutor</button></div></div></div>
@@ -386,7 +382,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
             {studyMode === 'exam' && <QuizView pack={examPack} answers={examAnswers} setAnswers={setExamAnswers} title="Simulacro del material" exam onAnswer={(index, correct) => recordActivity(activeMaterial.id, value => ({ ...value, answers: { ...value.answers, [`exam:${index}`]: correct } }))} />}
             {studyMode === 'tutor' && <TutorView key={activeMaterial.id} material={activeMaterial} />}
           </> : <EmptyState title="No hay material seleccionado" text="Entra a un curso y agrega un PDF para crear una sesión de estudio." action="Ver cursos" onClick={() => navigate('/courses')} />}</div>
-        </section>}
+        </div></section>}
 
         {tab === 'progreso' && <ProgressPage workspace={workspaces.selectedWorkspace} courses={workspaceCourses} activity={activity} onOpenMaterial={openMaterial} />}
       </main>
@@ -395,10 +391,9 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
         <NavButton icon="⌂" label="Inicio" active={tab === 'inicio'} onClick={() => setTab('inicio')}/>
         <NavButton icon="▦" label="Cursos" active={tab === 'cursos'} onClick={() => setTab('cursos')}/>
         <NavButton icon="⌁" label="Resolver" active={tab === 'resolver'} onClick={() => setTab('resolver')}/>
-        <NavButton icon="✦" label="Estudiar" active={tab === 'estudiar'} onClick={() => setTab('estudiar')}/>
-        <button className={`nav-button ${['carpetas', 'corrector', 'progreso'].includes(tab) ? 'active' : ''}`} aria-label="Más opciones" aria-haspopup="dialog" onClick={() => setShowMobileMenu(true)}><Icon name="more"/><span className="nav-label">Más</span></button>
+        <NavButton icon="✎" label="Corrector" active={tab === 'corrector'} onClick={() => setTab('corrector')}/>
+        <NavButton icon="↗" label="Progreso" active={tab === 'progreso'} onClick={() => setTab('progreso')}/>
       </nav>
-      {showMobileMenu && <Modal title="Tu espacio Nexo" onClose={() => setShowMobileMenu(false)}><div className="mobile-more-list"><NavButton icon="▱" label="Espacios" active={tab === 'carpetas'} onClick={() => setTab('carpetas')}/><NavButton icon="✎" label="Corrector" active={tab === 'corrector'} onClick={() => setTab('corrector')}/><NavButton icon="↗" label="Progreso" active={tab === 'progreso'} onClick={() => setTab('progreso')}/></div></Modal>}
 
       {showCourseForm && <Modal title={`Nuevo curso · ${workspaces.selectedWorkspace.name}`} onClose={() => setShowCourseForm(false)}><div className="course-emoji-preview"><span>{courseEmoji}</span><div><strong>Un curso para {workspaces.selectedWorkspace.name}</strong><small>Quedará dentro de este espacio y su avance se medirá aquí.</small></div></div><div className="course-emoji-picker">{['📘','🧠','🧪','🩺','🦷','📐','⚛️','💻','📚','🌎','⚖️','💹','🧬','🔬','🎨','🎯'].map(emoji => <button key={emoji} className={courseEmoji === emoji ? 'active' : ''} onClick={() => setCourseEmoji(emoji)}>{emoji}</button>)}</div><label>Nombre del curso<input autoFocus value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Ej. Histología" onKeyDown={e => e.key === 'Enter' && addCourse()} /></label>{courseError && <div role="alert" className="auth-alert error">{courseError}</div>}<div className="modal-actions"><button className="secondary" onClick={() => setShowCourseForm(false)}>Cancelar</button><button className="primary" disabled={courseBusy || !courseName.trim()} onClick={addCourse}>{courseBusy ? 'Creando…' : 'Crear curso'}</button></div></Modal>}
 
@@ -410,7 +405,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
 
 function NavButton({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) { return <button className={`nav-button ${active ? 'active' : ''}`} title={label} aria-label={label} aria-current={active ? 'page' : undefined} onClick={onClick}><Icon name={icon}/><span className="nav-label">{label}</span></button> }
 function Stat({ label, value, hint }: { label: string; value: string; hint: string }) { return <div className="stat-card"><p>{label}</p><strong>{value}</strong><small>{hint}</small></div> }
-function EmptyState({ title, text, action, onClick }: { title: string; text: string; action: string; onClick: () => void }) { return <div className="empty-state"><span>✦</span><h3>{title}</h3><p>{text}</p><button className="primary" onClick={onClick}>{action}</button></div> }
+function EmptyState({ title, text, action, onClick }: { title: string; text: string; action?: string; onClick?: () => void }) { return <div className="empty-state"><span>✦</span><h3>{title}</h3><p>{text}</p>{action && onClick && <button className="primary" onClick={onClick}>{action}</button>}</div> }
 
 function StudyGenerationBanner({ material }: { material: Material }) {
   return <div className="study-generating"><div className="study-generating-orb">✦</div><div><strong>Nexo IA está preparando tu sesión</strong><p>Analizando {material.pages?.length ? `${material.pages.length} páginas` : 'el material'}, seleccionando conceptos importantes y construyendo flashcards + preguntas.</p><div className="study-generation-track"><span/></div></div></div>
@@ -443,5 +438,5 @@ function TutorView({ material }: { material: Material }) {
 }
 
 function Modal({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) { return <Dialog title={title} onClose={onClose} className={`modal ${wide ? 'wide-modal' : ''}`}><div className="modal-head"><h2>{title}</h2><button aria-label="Cerrar diálogo" onClick={onClose}>×</button></div>{children}</Dialog> }
-function tabTitle(tab: AppTab) { const hour = new Date().getHours(); return ({ inicio: `${hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches'} 👋`, cursos: 'Mis cursos', carpetas: 'Espacios', resolver: 'Resolver con Nexo IA', corrector: 'Corrector de trabajos', estudiar: 'Sala de estudio', progreso: 'Tu progreso' } as const)[tab] }
+function tabTitle(tab: AppTab) { const hour = new Date().getHours(); return ({ inicio: `${hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches'} 👋`, cursos: 'Mis cursos', resolver: 'Resolver con Nexo IA', corrector: 'Corrector de trabajos', progreso: 'Tu progreso' } as const)[tab] }
 export default App

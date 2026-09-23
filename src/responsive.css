@@ -399,3 +399,78 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
   .workspace-trigger-copy small { font-size: 7px; }
   .workspace-context { font-size: 10px; }
 }
+
+/* A single edge tab opens the workspace explorer from anywhere in the app. */
+.workspace-edge-trigger { position: fixed; z-index: 94; top: 112px; right: 0; display: flex; align-items: center; gap: 9px; min-width: 136px; max-width: 184px; min-height: 52px; padding: 8px 12px 8px 9px; border: 1px solid #b39fff75; border-right: 0; border-radius: 15px 0 0 15px; background: #26213f; color: #f4f1ff; box-shadow: -9px 12px 30px #0005; cursor: pointer; text-align: left; }
+.workspace-edge-trigger:hover, .workspace-edge-trigger[aria-expanded="true"] { background: #332c52; border-color: #c5b5ff; }
+.workspace-edge-icon { flex: 0 0 34px; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: #ffffff14; font-size: 18px; }
+.workspace-edge-copy { min-width: 0; display: grid; gap: 2px; flex: 1; }
+.workspace-edge-copy small { font-size: 8px; letter-spacing: 1px; font-weight: 800; color: #c5b5ff; }
+.workspace-edge-copy strong { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.workspace-edge-trigger > span:last-child { color: #d4c9ff; font-size: 19px; }
+.workspace-drawer-layer { position: fixed; inset: 0; z-index: 100; }
+.workspace-drawer-backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: #070a15b8; cursor: default; }
+.workspace-drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(460px, 100vw); overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: max(24px, env(safe-area-inset-top)) max(22px, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)) 22px; border-left: 1px solid #b4a2ff4a; background: #111626; box-shadow: -24px 0 70px #0009; }
+.workspace-drawer:focus { outline: none; }
+.workspace-drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.workspace-drawer-head h2 { font: 800 23px Manrope, sans-serif; letter-spacing: -.7px; margin: 0 0 5px; }
+.workspace-drawer-head span { font-size: 12px; color: var(--muted); }
+.workspace-drawer-close { flex: 0 0 42px; width: 42px; height: 42px; border: 1px solid var(--border); border-radius: 11px; background: #1d2435; color: #e9e6ff; font-size: 25px; cursor: pointer; }
+.workspace-explorer { display: grid; gap: 16px; padding-top: 18px; }
+.explorer-toolbar, .explorer-contents-head, .explorer-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.explorer-toolbar > span, .explorer-contents-head small { color: #97a2bc; font-size: 10px; letter-spacing: 1.4px; font-weight: 800; }
+.explorer-toolbar > button { min-height: 42px; border: 1px solid #b39fff52; border-radius: 10px; padding: 8px 12px; background: #a994ff1b; color: #e0d7ff; cursor: pointer; font-size: 12px; font-weight: 800; }
+.explorer-create { display: grid; gap: 10px; padding: 13px; border: 1px solid #b39fff3a; border-radius: 14px; background: #a994ff0c; }
+.explorer-create .folder-emoji-row button { min-width: 38px; min-height: 38px; font-size: 19px; }
+.explorer-create input { width: 100%; min-height: 46px; border: 1px solid var(--border); border-radius: 10px; background: #0b101b; color: var(--text); padding: 10px 12px; }
+.explorer-create-actions { display: flex; gap: 8px; }
+.explorer-create-actions button { flex: 1; }
+.explorer-tree { display: grid; gap: 6px; }
+.explorer-folder { display: flex; align-items: center; gap: 11px; min-height: 62px; width: 100%; padding: 10px 12px; border: 1px solid transparent; border-radius: 12px; background: #1a2030; color: var(--text); text-align: left; cursor: pointer; }
+.explorer-folder:hover, .explorer-folder.active { border-color: #a995ff84; background: #26213d; }
+.explorer-folder-icon { display: grid; place-items: center; width: 38px; height: 38px; flex-shrink: 0; border-radius: 10px; background: #ffffff10; font-size: 20px; }
+.explorer-folder-label { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.explorer-folder-label strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.explorer-folder-label small { color: #9da8be; font-size: 10px; }
+.explorer-folder-progress { flex-shrink: 0; color: #c4b6ff; font: 800 13px Manrope, sans-serif; }
+.explorer-contents { padding-top: 17px; border-top: 1px solid var(--border); }
+.explorer-contents-head { align-items: flex-end; }
+.explorer-contents-head h3 { margin: 4px 0 0; font: 800 19px Manrope, sans-serif; overflow-wrap: anywhere; }
+.explorer-contents-head > span { flex-shrink: 0; color: var(--muted); font-size: 11px; }
+.explorer-actions { justify-content: flex-start; flex-wrap: wrap; margin: 17px 0 12px; }
+.explorer-actions .secondary { min-height: 40px; padding: 8px 12px; font-size: 12px; }
+.explorer-actions .danger-text { min-height: 40px; padding: 8px 2px; }
+.explorer-course-list { display: grid; gap: 9px; }
+.explorer-course { min-width: 0; padding: 11px; border: 1px solid var(--border); border-radius: 13px; background: #171d2c; }
+.explorer-course-open { display: flex; align-items: center; gap: 10px; width: 100%; padding: 0 0 11px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.explorer-course-open > span:first-child { display: grid; place-items: center; flex: 0 0 37px; width: 37px; height: 37px; border-radius: 10px; background: #a994ff18; font-size: 20px; }
+.explorer-course-open > span:nth-child(2) { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.explorer-course-open strong { font-size: 12px; overflow-wrap: anywhere; }
+.explorer-course-open small { color: var(--muted); font-size: 10px; }
+.explorer-course-open b { color: #c9bcff; }
+.explorer-course label { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 11px; }
+.explorer-course select { max-width: 175px; min-height: 38px; border: 1px solid var(--border); border-radius: 9px; background: #0d1220; color: var(--text); padding: 7px; }
+.explorer-empty { padding: 24px 18px; border: 1px dashed var(--border); border-radius: 13px; text-align: center; }
+.explorer-empty span { font-size: 29px; }
+.explorer-empty p { max-width: 260px; margin: 8px auto 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.workspace-explorer .spaces-bring { display: grid; gap: 7px; margin: 0 0 12px; }
+.workspace-explorer .spaces-bring > strong { margin: 0; }
+.workspace-explorer .spaces-bring button { width: 100%; }
+.course-study-page { display: grid; gap: 16px; }
+.course-study-context { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 20px 22px; border: 1px solid #a994ff36; border-radius: 17px; background: #a994ff0c; }
+.course-study-context h2 { margin: 0; font: 800 20px Manrope, sans-serif; }
+.course-study-context button { flex-shrink: 0; }
+@media (max-width: 700px) {
+  .topbar { margin-bottom: 78px; }
+  .workspace-edge-trigger { top: calc(140px + env(safe-area-inset-top)); min-width: 107px; max-width: 130px; min-height: 46px; padding: 6px 9px 6px 6px; gap: 5px; }
+  .workspace-edge-icon { width: 30px; height: 30px; flex-basis: 30px; font-size: 16px; }
+  .workspace-edge-copy strong { max-width: 66px; font-size: 11px; }
+  .workspace-edge-copy small { font-size: 7px; }
+  .workspace-edge-trigger > span:last-child { font-size: 15px; }
+  .workspace-drawer { width: 100vw; padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+  .course-study-context { flex-direction: column; align-items: flex-start; }
+  .course-study-context button { width: 100%; }
+  .course-study-page .material-nav { order: 0; }
+  .course-study-page .mode-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; overflow: visible; }
+  .course-study-page .mode-tabs button { min-width: 0; padding: 9px 4px; font-size: 10px; }
+}

@@ -57,16 +57,19 @@ async function login(page: Page) {
 }
 
 async function switchTo(page: Page, name: string) {
-  await page.getByRole('button', { name: /Cambiar espacio de estudio/ }).click()
+  const trigger = page.getByRole('button', { name: /Cambiar espacio de estudio/ })
+  if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
   await page.getByRole('group', { name: 'Espacios de estudio' }).getByRole('button', { name: new RegExp(name) }).click()
+  await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
 }
 
 async function createWorkspace(page: Page, name: string) {
-  await page.goto('/folders')
+  await page.getByRole('button', { name: /Cambiar espacio de estudio/ }).click()
   await page.getByRole('button', { name: 'Nuevo espacio' }).click()
   await page.getByRole('textbox', { name: 'Nombre del espacio' }).fill(name)
   await page.getByRole('button', { name: 'Crear espacio', exact: true }).click()
   await expect(page.getByRole('button', { name: `Cambiar espacio de estudio. Actual: ${name}` })).toBeVisible()
+  await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
 }
 
 test('a workspace owns new courses and restores the selected world after reload', async ({ page }, info) => {
@@ -114,11 +117,13 @@ test('moving a course transfers its real progress and deleting the workspace ret
   const originalProgress = Number((await page.locator('.progress-overall strong').textContent())?.replace('%', ''))
   expect(originalProgress).toBeGreaterThan(0)
   await createWorkspace(page, 'Exámenes')
+  await page.getByRole('button', { name: /Cambiar espacio de estudio/ }).click()
   await page.getByRole('button', { name: 'Traer curso' }).first().click()
   await page.locator('.spaces-bring').getByRole('button', { name: /Biología/ }).click()
-  await expect(page.locator('.spaces-content')).toBeFocused()
+  await expect(page.locator('.explorer-course-open').filter({ hasText: 'Biología' })).toBeVisible()
   await page.screenshot({ path: info.outputPath('space-with-course.png'), fullPage: true })
-  await page.goto('/study')
+  await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
+  await page.goto('/courses/course-bio/materials/mat-cell')
   await expect(page.getByRole('heading', { name: 'Introducción a la célula' }).first()).toBeVisible()
   await page.goto('/progress')
   await expect(page.getByRole('heading', { name: 'Biología' })).toBeVisible()
@@ -132,10 +137,11 @@ test('moving a course transfers its real progress and deleting the workspace ret
   await page.goto('/progress')
   await expect(page.locator('.progress-overall strong')).toHaveText('0%')
   await switchTo(page, 'Exámenes')
-  await page.goto('/folders')
+  await page.getByRole('button', { name: /Cambiar espacio de estudio/ }).click()
   page.once('dialog', dialog => dialog.accept())
   await page.getByRole('button', { name: 'Eliminar espacio' }).click()
   await expect(page.getByRole('button', { name: 'Cambiar espacio de estudio. Actual: General' })).toBeVisible()
+  await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
   await page.goto('/courses')
   await expect(page.getByRole('button', { name: /Biología/ })).toBeVisible()
   await page.goto('/progress')

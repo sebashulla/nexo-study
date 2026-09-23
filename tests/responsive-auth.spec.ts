@@ -82,27 +82,39 @@ test('recovery callback requires matching passwords and updates the account', as
   await expect(page.getByRole('button', { name: 'Mi cuenta' })).toBeVisible()
 })
 
-test('all workspace routes fit the viewport and mobile navigation reaches every section', async ({ page }, info) => {
+test('course study and main routes fit the viewport with one workspace explorer', async ({ page }, info) => {
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await login(page)
   await page.screenshot({ path: info.outputPath('home.png'), fullPage: true })
-  for (const route of ['/courses', '/folders', '/resolver', '/corrector', '/study', '/progress']) {
+  for (const route of ['/courses', '/courses/course-bio/materials/mat-cell', '/resolver', '/corrector', '/progress']) {
     await page.goto(route)
     await expect(page.getByRole('button', { name: 'Mi cuenta' })).toBeVisible()
     await noOverflow(page)
-    await page.screenshot({ path: info.outputPath(`${route.slice(1)}.png`), fullPage: true })
+    await page.screenshot({ path: info.outputPath(`${route.slice(1).replaceAll('/', '-')}.png`), fullPage: true })
   }
+  await expect(page.locator('.sidebar nav').getByRole('button', { name: 'Espacios', includeHidden: true })).toHaveCount(0)
+  await expect(page.locator('.sidebar nav').getByRole('button', { name: 'Estudiar', includeHidden: true })).toHaveCount(0)
+  await page.getByRole('button', { name: /Cambiar espacio de estudio/ }).click()
+  await expect(page.getByRole('dialog', { name: 'Explorador de espacios' })).toBeVisible()
+  await noOverflow(page)
+  await page.screenshot({ path: info.outputPath('explorer.png'), fullPage: true })
+  await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
+  await page.goto('/folders')
+  await expect(page).toHaveURL(/\/courses$/)
+  await expect(page.getByRole('dialog', { name: 'Explorador de espacios' })).toBeVisible()
+  await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
+  await page.goto('/study')
+  await expect(page).toHaveURL(/\/courses$/)
   if (page.viewportSize()!.width <= 700) {
     const nav = page.getByRole('navigation', { name: 'Navegación móvil' })
     await expect(nav).toBeVisible()
-    for (const name of ['Espacios', 'Corrector', 'Progreso']) {
-      await nav.getByRole('button', { name: 'Más opciones' }).click()
-      const dialog = page.getByRole('dialog', { name: 'Tu espacio Nexo' })
-      await expect(dialog).toBeVisible()
-      await dialog.getByRole('button', { name, exact: true }).click()
-      await expect(dialog).not.toBeVisible()
-    }
+    await expect(nav.getByRole('button', { name: 'Espacios' })).toHaveCount(0)
+    await expect(nav.getByRole('button', { name: 'Estudiar' })).toHaveCount(0)
+    await nav.getByRole('button', { name: 'Corrector' }).click()
+    await expect(page).toHaveURL(/\/corrector$/)
+    await nav.getByRole('button', { name: 'Progreso' }).click()
+    await expect(page).toHaveURL(/\/progress$/)
     for (const button of await nav.getByRole('button').all()) {
       const box = (await button.boundingBox())!
       expect(box.width).toBeGreaterThanOrEqual(44)
@@ -118,7 +130,7 @@ test('bad URLs and malformed saved courses recover without a blank page', async 
   await page.goto('/courses')
   await expect(page.getByRole('button', { name: 'Mi cuenta' })).toBeVisible()
   await page.evaluate(() => { window.history.pushState({}, '', '/courses/%invalid'); window.dispatchEvent(new PopStateEvent('popstate')) })
-  await expect(page.getByRole('heading', { name: 'Mis cursos en este espacio' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Mis cursos', level: 2 })).toBeVisible()
   await noOverflow(page)
 })
 
