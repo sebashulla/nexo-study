@@ -737,6 +737,8 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .solver-composer textarea { min-height: 48px; max-height: 160px; padding-bottom: 5px; resize: none; }
 .solver-categories { padding-bottom: 7px; }
 .solver-attach svg, .feedback-fab svg { width: 19px; height: 19px; }
+.deep-toggle input { display: block; position: absolute; width: 1px; height: 1px; opacity: 0; }
+.deep-toggle input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 3px; }
 .feedback-type-grid button svg { width: 20px; height: 20px; }
 .primary, .secondary, .nav-button { border-radius: var(--radius-control); }
 .flashcard, .course-library-card, .material-card, .quiz-card, .course-mini, .panel { border-radius: var(--radius-card); }
