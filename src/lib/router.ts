@@ -9,9 +9,15 @@ export type AppRoute = {
 export function parseAppRoute(pathname: string): AppRoute {
   const path = pathname.replace(/\/+$/, '') || '/'
   const materialMatch = path.match(/^\/courses\/([^/]+)\/materials\/([^/]+)$/)
-  if (materialMatch) return { tab: 'estudiar', courseId: decodeURIComponent(materialMatch[1]), materialId: decodeURIComponent(materialMatch[2]) }
+  if (materialMatch) {
+    try { return { tab: 'estudiar', courseId: decodeURIComponent(materialMatch[1]), materialId: decodeURIComponent(materialMatch[2]) } }
+    catch { return { tab: 'cursos' } }
+  }
   const courseMatch = path.match(/^\/courses\/([^/]+)$/)
-  if (courseMatch) return { tab: 'cursos', courseId: decodeURIComponent(courseMatch[1]) }
+  if (courseMatch) {
+    try { return { tab: 'cursos', courseId: decodeURIComponent(courseMatch[1]) } }
+    catch { return { tab: 'cursos' } }
+  }
   if (path === '/courses') return { tab: 'cursos' }
   if (path === '/folders') return { tab: 'carpetas' }
   if (path === '/resolver') return { tab: 'resolver' }

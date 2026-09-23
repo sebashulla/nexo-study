@@ -7,6 +7,8 @@ type AuthContextValue = {
   loading: boolean
   session: Session | null
   user: User | null
+  recovering: boolean
+  finishRecovery: () => void
   signOut: () => Promise<void>
 }
 
@@ -15,6 +17,8 @@ const AuthContext = createContext<AuthContextValue>({
   loading: true,
   session: null,
   user: null,
+  recovering: false,
+  finishRecovery: () => {},
   signOut: async () => {},
 })
 
@@ -23,6 +27,7 @@ const LAUNCH_KEY = 'nexo-onboarding-launch'
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
+  const [recovering, setRecovering] = useState(() => window.location.pathname === '/reset-password' || new URLSearchParams(window.location.hash.slice(1)).get('type') === 'recovery')
 
   useEffect(() => {
     if (!supabase) {
@@ -37,10 +42,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (!mounted) return
       setSession(data.session)
       setLoading(false)
-    })
+    }).catch(() => { if (mounted) setLoading(false) })
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!mounted) return
+      if (event === 'PASSWORD_RECOVERY') setRecovering(true)
+      if (launchTimer) window.clearTimeout(launchTimer)
       const holdLaunch = event === 'SIGNED_IN' && sessionStorage.getItem(LAUNCH_KEY) === '1'
       if (holdLaunch) {
         setLoading(false)
@@ -66,11 +73,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     session,
     user: session?.user ?? null,
+    recovering,
+    finishRecovery: () => {
+      setRecovering(false)
+      window.history.replaceState({}, '', '/')
+    },
     signOut: async () => {
       sessionStorage.removeItem(LAUNCH_KEY)
-      if (supabase) await supabase.auth.signOut()
+      if (supabase) {
+        const { error } = await supabase.auth.signOut()
+        if (error) throw error
+      }
     },
-  }), [loading, session])
+  }), [loading, session, recovering])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

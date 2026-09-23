@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { demoCourses } from './data/demo'
 import { extractPdf } from './lib/documentEngine'
 import { generateStudyPack } from './lib/studyEngine'
@@ -15,6 +15,9 @@ import type { User } from '@supabase/supabase-js'
 import { BrandLogo } from './BrandLogo'
 import { FeedbackWidget } from './FeedbackWidget'
 import { AdminFeedbackPage } from './AdminFeedbackPage'
+import { Dialog } from './Dialog'
+import { Icon } from './Icon'
+import { authErrorMessage } from './auth/authErrors'
 
 type StudyMode = 'summary' | 'flashcards' | 'quiz' | 'exam' | 'tutor'
 
@@ -37,23 +40,33 @@ const studyLevelOptions: { value: StudyLevel; label: string }[] = [
 
 function loadInitialCourses(userId: string): Course[] {
   try {
+    const parseCourses = (value: string): Course[] | null => {
+      const parsed: unknown = JSON.parse(value)
+      return Array.isArray(parsed) && parsed.every(course =>
+        course && typeof course.id === 'string' && typeof course.name === 'string' &&
+        Array.isArray(course.materials) && course.materials.every((material: Material) =>
+          material && typeof material.id === 'string' && typeof material.title === 'string' && typeof material.text === 'string'))
+        ? parsed as Course[] : null
+    }
     const ownKey = `${STORAGE_PREFIX}${userId}`
     const own = localStorage.getItem(ownKey)
-    if (own) return JSON.parse(own)
+    if (own) return parseCourses(own) ?? demoCourses
     const legacy = LEGACY_KEYS.map(key => localStorage.getItem(key)).find(Boolean)
     if (legacy) {
+      const parsed = parseCourses(legacy)
+      if (!parsed) return demoCourses
       localStorage.setItem(ownKey, legacy)
       LEGACY_KEYS.forEach(key => localStorage.removeItem(key))
-      return JSON.parse(legacy)
+      return parsed
     }
     return demoCourses
   } catch { return demoCourses }
 }
 
 function App() {
-  const { loading, user, signOut } = useAuth()
+  const { loading, user, signOut, recovering } = useAuth()
   if (loading) return <div className="app-loading"><BrandLogo iconOnly/><strong>Cargando Nexo…</strong></div>
-  if (!user) return <AuthPage />
+  if (!user || recovering) return <AuthPage />
   if (window.location.pathname === '/nexo-ops/feedback-console') return <AdminFeedbackPage />
   return <StudyApp key={user.id} user={user} signOut={signOut} />
 }
@@ -83,16 +96,23 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [quizAnswers, setQuizAnswers] = useState<Record<number, number>>({})
   const [examAnswers, setExamAnswers] = useState<Record<number, number>>({})
   const [showAccountMenu, setShowAccountMenu] = useState(false)
+  const [showMobileMenu, setShowMobileMenu] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+  const [accountError, setAccountError] = useState('')
+  const [storageError, setStorageError] = useState('')
+  const accountRef = useRef<HTMLDivElement>(null)
   const [aiGeneratingMaterialId, setAiGeneratingMaterialId] = useState<string | null>(null)
   const [aiGenerationErrors, setAiGenerationErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    const onPopState = () => setPathname(window.location.pathname)
+    const onPopState = () => { setPathname(window.location.pathname); setShowMobileMenu(false); setShowAccountMenu(false) }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
   const navigate = (path: string, replace = false) => {
+    setShowMobileMenu(false)
+    setShowAccountMenu(false)
     if (window.location.pathname === path) return
     window.history[replace ? 'replaceState' : 'pushState']({}, '', path)
     setPathname(path)
@@ -100,7 +120,25 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   }
   const setTab = (next: AppTab) => navigate(tabPath(next))
 
-  useEffect(() => { localStorage.setItem(`${STORAGE_PREFIX}${user.id}`, JSON.stringify(courses)) }, [courses, user.id])
+  useEffect(() => {
+    try { localStorage.setItem(`${STORAGE_PREFIX}${user.id}`, JSON.stringify(courses)); setStorageError('') }
+    catch { setStorageError('El almacenamiento de este navegador está lleno o no está disponible. Los cambios de esta sesión podrían perderse al cerrar la página.') }
+  }, [courses, user.id])
+
+  useEffect(() => {
+    if (!showAccountMenu) return
+    const dismiss = (event: PointerEvent) => { if (!accountRef.current?.contains(event.target as Node)) setShowAccountMenu(false) }
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setShowAccountMenu(false); accountRef.current?.querySelector('button')?.focus() } }
+    document.addEventListener('pointerdown', dismiss)
+    document.addEventListener('keydown', escape)
+    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', escape) }
+  }, [showAccountMenu])
+
+  const logout = async () => {
+    setSigningOut(true); setAccountError('')
+    try { await signOut() } catch (error) { setAccountError(authErrorMessage(error)) }
+    finally { setSigningOut(false) }
+  }
 
   useEffect(() => {
     if (route.courseId) setActiveCourseId(route.courseId)
@@ -112,6 +150,8 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const activeMaterial = activeCourse
     ? (route.materialId ? activeCourse.materials.find(material => material.id === route.materialId) : (activeCourse.materials.find(material => material.id === activeMaterialId) ?? activeCourse.materials[0]))
     : undefined
+
+  useEffect(() => { setQuizAnswers({}); setExamAnswers({}); setFlashIndex(0); setFlashRevealed(false) }, [activeMaterial?.id])
 
   useEffect(() => {
     if (!activeCourse) return
@@ -235,9 +275,10 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
 
   return (
     <div className="app-shell">
+      <a href="#main-content" className="skip-link">Saltar al contenido</a>
       <aside className="sidebar">
         <button className="brand" onClick={() => setTab('inicio')} aria-label="Ir al inicio"><BrandLogo compact/></button>
-        <nav>
+        <nav aria-label="Navegación principal">
           <NavButton icon="⌂" label="Inicio" active={tab === 'inicio'} onClick={() => setTab('inicio')} />
           <NavButton icon="▦" label="Mis cursos" active={tab === 'cursos'} onClick={() => setTab('cursos')} />
           <NavButton icon="▱" label="Carpetas" active={tab === 'carpetas'} onClick={() => setTab('carpetas')} />
@@ -246,16 +287,17 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
           <NavButton icon="✦" label="Estudiar" active={tab === 'estudiar'} onClick={() => setTab('estudiar')} />
           <NavButton icon="↗" label="Progreso" active={tab === 'progreso'} onClick={() => setTab('progreso')} />
         </nav>
-        <div className="sidebar-card"><span>✦</span><strong>V0.8 · Beta</strong><p>Rutas reales por curso y material, PDFs preparados automáticamente con Nexo IA.</p></div>
+        <div className="sidebar-card"><span>✦</span><strong>Un poco cada día.</strong><p>Organiza tus ideas y haz espacio para tu próximo logro.</p><small>Nexo Study · Beta</small></div>
       </aside>
 
-      <main className="main-content">
-        <header className="topbar"><div><p className="eyebrow">Tu espacio de estudio</p><h1>{topTitle}</h1></div><div className="top-actions"><div className="ai-chip"><span className="status-dot"></span><strong>Nexo IA</strong></div><div className="account-wrap"><button className="avatar" onClick={() => setShowAccountMenu(value => !value)}>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</button>{showAccountMenu && <div className="account-menu"><strong>{user.user_metadata?.full_name || 'Estudiante Nexo'}</strong><span>{user.email}</span><button onClick={() => signOut()}>Cerrar sesión</button></div>}</div></div></header>
+      <main className="main-content" id="main-content" tabIndex={-1}>
+        <header className="topbar"><div><p className="eyebrow">Tu espacio de estudio</p><h1>{topTitle}</h1></div><div className="top-actions"><div className="ai-chip"><span className="status-dot"></span><strong>Nexo IA</strong></div><div className="account-wrap" ref={accountRef}><button className="avatar" aria-label="Mi cuenta" aria-expanded={showAccountMenu} aria-controls="account-menu" onClick={() => setShowAccountMenu(value => !value)}>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</button>{showAccountMenu && <div className="account-menu" id="account-menu"><strong>{user.user_metadata?.full_name || 'Estudiante Nexo'}</strong><span>{user.email}</span><button disabled={signingOut} onClick={logout}>{signingOut ? 'Cerrando sesión…' : 'Cerrar sesión'}</button>{accountError && <p role="alert" className="auth-alert error">{accountError}</p>}</div>}</div></div></header>
+        {storageError && <p role="alert" className="auth-alert error">{storageError}</p>}
 
         {(route.courseId || route.materialId) && <div className="route-breadcrumbs"><button onClick={() => navigate('/courses')}>Cursos</button>{activeCourse && <><span>›</span><button onClick={() => navigate(coursePath(activeCourse.id))}>{activeCourse.emoji} {activeCourse.name}</button></>}{route.materialId && activeMaterial && <><span>›</span><strong>{activeMaterial.title}</strong></>}</div>}
 
         {tab === 'inicio' && <section className="page-grid">
-          <div className="hero-card"><div><span className="pill">Nexo Study · Beta V0.8</span><h2>Sube un PDF. Nexo lo convierte en una sesión de estudio.</h2><p>El contenido se procesa por páginas y Nexo IA prepara resumen, flashcards y preguntas con referencias al material antes de que empieces a estudiar.</p><div className="hero-actions"><button className="primary" onClick={() => setShowMaterialForm(true)}>Subir material</button><button className="secondary" onClick={() => setTab('cursos')}>Ver mis cursos</button></div></div><div className="hero-orb"><span>AI</span><small>PDF → Study</small></div></div>
+          <div className="hero-card"><div><span className="pill">✦ Tu material. Tu manera de aprender.</span><h2>De tus apuntes a tu próximo <em>logro.</em></h2><p>Sube un PDF y encuentra claridad. Resúmenes, flashcards y preguntas para avanzar a tu ritmo.</p><div className="hero-actions"><button className="primary" onClick={() => activeCourse ? setShowMaterialForm(true) : setShowCourseForm(true)}>＋ Subir material</button><button className="secondary" onClick={() => setTab('cursos')}>Ver mis cursos ↗</button></div><div className="hero-caption">ORGANIZA <span>·</span> COMPRENDE <span>·</span> PRACTICA</div></div><div className="hero-study-art" aria-hidden="true"><div className="art-orbit"/><div className="art-sheet art-sheet-back"/><div className="art-sheet"><span>✦ NEXO STUDY</span><h3>Todo empieza<br/>con una idea.</h3><i/><i/><i/><div><b>✓</b> Lista para aprender</div></div><div className="art-tag">✦ De PDF a posibilidades</div></div></div>
           <div className="stats-grid"><Stat label="Cursos" value={`${courses.length}`} hint="organizados"/><Stat label="Materiales" value={`${totalMaterials}`} hint="guardados"/><Stat label="PDF preparados" value={`${aiPreparedMaterials}`} hint="con Nexo IA"/><Stat label="Resolver" value="Nexo IA" hint="texto + imagen"/></div>
           <section className="panel wide"><div className="section-head"><div><p className="eyebrow">Continúa</p><h3>Tus cursos</h3></div><button className="text-button" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div><div className="course-row">{courses.map(course => <button className="course-mini" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>›</b></button>)}</div></section>
         </section>}
@@ -286,12 +328,21 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
             {studyMode === 'flashcards' && <FlashcardView pack={pack} index={flashIndex} revealed={flashRevealed} setIndex={setFlashIndex} setRevealed={setFlashRevealed} />}
             {studyMode === 'quiz' && <QuizView pack={quickPack} answers={quizAnswers} setAnswers={setQuizAnswers} title="Quiz rápido" />}
             {studyMode === 'exam' && <QuizView pack={examPack} answers={examAnswers} setAnswers={setExamAnswers} title="Simulacro del material" exam />}
-            {studyMode === 'tutor' && <TutorView material={activeMaterial} />}
+            {studyMode === 'tutor' && <TutorView key={activeMaterial.id} material={activeMaterial} />}
           </> : <EmptyState title="No hay material seleccionado" text="Entra a un curso y agrega un PDF para crear una sesión de estudio." action="Ver cursos" onClick={() => navigate('/courses')} />}</div>
         </section>}
 
         {tab === 'progreso' && <section className="page-grid"><div className="stats-grid"><Stat label="Cursos" value={`${courses.length}`} hint="activos"/><Stat label="Materiales" value={`${totalMaterials}`} hint="biblioteca"/><Stat label="PDF" value={`${pdfMaterials}`} hint="procesados"/><Stat label="IA preparada" value={`${aiPreparedMaterials}`} hint="sesiones generadas"/></div><div className="panel wide roadmap-card"><p className="eyebrow">V0.8 beta</p><h3>Una ruta distinta para cada parte de tu estudio</h3><div className="feature-grid"><Feature icon="🔗" title="Rutas reales" text="Cursos y materiales tienen URLs separadas, listas para compartir y navegar con atrás/adelante."/><Feature icon="✦" title="PDF → Nexo IA" text="Al guardar un PDF se genera automáticamente resumen, flashcards y quiz."/><Feature icon="📄" title="Muestreo por páginas" text="Nexo distribuye la lectura a lo largo del PDF y conserva referencias de página."/><Feature icon="🎯" title="Perfil de estudio" text="Elige comprender, memorizar, equilibrado o preparación de examen."/><Feature icon="🧠" title="Fallback local" text="Si la IA no responde, el material sigue siendo estudiable sin bloquearte."/><Feature icon="☁️" title="Supabase" text="Cuenta, onboarding, carpetas, feedback y administración protegida por RLS."/></div></div></section>}
       </main>
+
+      <nav className="mobile-nav" aria-label="Navegación móvil">
+        <NavButton icon="⌂" label="Inicio" active={tab === 'inicio'} onClick={() => setTab('inicio')}/>
+        <NavButton icon="▦" label="Cursos" active={tab === 'cursos'} onClick={() => setTab('cursos')}/>
+        <NavButton icon="⌁" label="Resolver" active={tab === 'resolver'} onClick={() => setTab('resolver')}/>
+        <NavButton icon="✦" label="Estudiar" active={tab === 'estudiar'} onClick={() => setTab('estudiar')}/>
+        <button className={`nav-button ${['carpetas', 'corrector', 'progreso'].includes(tab) ? 'active' : ''}`} aria-label="Más opciones" aria-haspopup="dialog" onClick={() => setShowMobileMenu(true)}><Icon name="more"/><span className="nav-label">Más</span></button>
+      </nav>
+      {showMobileMenu && <Modal title="Tu espacio Nexo" onClose={() => setShowMobileMenu(false)}><div className="mobile-more-list"><NavButton icon="▱" label="Carpetas" active={tab === 'carpetas'} onClick={() => setTab('carpetas')}/><NavButton icon="✎" label="Corrector" active={tab === 'corrector'} onClick={() => setTab('corrector')}/><NavButton icon="↗" label="Progreso" active={tab === 'progreso'} onClick={() => setTab('progreso')}/></div></Modal>}
 
       {showCourseForm && <Modal title="Nuevo curso" onClose={() => setShowCourseForm(false)}><div className="course-emoji-preview"><span>{courseEmoji}</span><div><strong>Dale una identidad a tu curso</strong><small>El emoji hará que sea más fácil reconocerlo de un vistazo.</small></div></div><div className="course-emoji-picker">{['📘','🧠','🧪','🩺','🦷','📐','⚛️','💻','📚','🌎','⚖️','💹','🧬','🔬','🎨','🎯'].map(emoji => <button key={emoji} className={courseEmoji === emoji ? 'active' : ''} onClick={() => setCourseEmoji(emoji)}>{emoji}</button>)}</div><label>Nombre del curso<input autoFocus value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Ej. Histología" onKeyDown={e => e.key === 'Enter' && addCourse()} /></label><div className="modal-actions"><button className="secondary" onClick={() => setShowCourseForm(false)}>Cancelar</button><button className="primary" onClick={addCourse}>Crear curso</button></div></Modal>}
 
@@ -301,7 +352,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   )
 }
 
-function NavButton({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) { return <button className={`nav-button ${active ? 'active' : ''}`} onClick={onClick}><span>{icon}</span>{label}</button> }
+function NavButton({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) { return <button className={`nav-button ${active ? 'active' : ''}`} title={label} aria-label={label} aria-current={active ? 'page' : undefined} onClick={onClick}><Icon name={icon}/><span className="nav-label">{label}</span></button> }
 function Stat({ label, value, hint }: { label: string; value: string; hint: string }) { return <div className="stat-card"><p>{label}</p><strong>{value}</strong><small>{hint}</small></div> }
 function Feature({ icon, title, text }: { icon: string; title: string; text: string }) { return <div className="feature-card"><span>{icon}</span><div><strong>{title}</strong><p>{text}</p></div></div> }
 function EmptyState({ title, text, action, onClick }: { title: string; text: string; action: string; onClick: () => void }) { return <div className="empty-state"><span>✦</span><h3>{title}</h3><p>{text}</p><button className="primary" onClick={onClick}>{action}</button></div> }
@@ -336,6 +387,6 @@ function TutorView({ material }: { material: Material }) {
   return <div className="tutor-wrap"><div className="ai-note"><span>🧠</span><div><strong>Tutor del material</strong><p>Busca evidencia dentro del documento y conserva referencias de página cuando están disponibles.</p></div></div><div className="tutor-chat">{history.length === 0 && <div className="tutor-empty"><span>✦</span><p>Prueba: “¿Qué función tiene…?”, “¿Cuál es la diferencia entre…?” o escribe un concepto del PDF.</p></div>}{history.map((item, i) => <div className="chat-turn" key={i}><div className="user-bubble">{item.q}</div><div className="tutor-bubble"><div className="confidence">Confianza {item.a.confidence}</div><p>{item.a.answer}</p>{item.a.citations.length > 0 && <div className="citations">{item.a.citations.map((c, j) => <div key={j}><strong>{c.page ? `Página ${c.page}` : 'Material'}</strong><span>{c.excerpt}</span></div>)}</div>}</div></div>)}</div><div className="tutor-input"><textarea rows={2} value={question} onChange={e => setQuestion(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ask() } }} placeholder="Pregunta algo sobre este material…"/><button className="primary" onClick={ask}>Preguntar</button></div></div>
 }
 
-function Modal({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) { return <div className="modal-backdrop" onMouseDown={onClose}><div className={`modal ${wide ? 'wide-modal' : ''}`} onMouseDown={e => e.stopPropagation()}><div className="modal-head"><h2>{title}</h2><button onClick={onClose}>×</button></div>{children}</div></div> }
-function tabTitle(tab: AppTab) { return ({ inicio: 'Buenas noches 👋', cursos: 'Mis cursos', carpetas: 'Carpetas', resolver: 'Resolver con Nexo IA', corrector: 'Corrector de trabajos', estudiar: 'Sala de estudio', progreso: 'Tu progreso' } as const)[tab] }
+function Modal({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) { return <Dialog title={title} onClose={onClose} className={`modal ${wide ? 'wide-modal' : ''}`}><div className="modal-head"><h2>{title}</h2><button aria-label="Cerrar diálogo" onClick={onClose}>×</button></div>{children}</Dialog> }
+function tabTitle(tab: AppTab) { const hour = new Date().getHours(); return ({ inicio: `${hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches'} 👋`, cursos: 'Mis cursos', carpetas: 'Carpetas', resolver: 'Resolver con Nexo IA', corrector: 'Corrector de trabajos', estudiar: 'Sala de estudio', progreso: 'Tu progreso' } as const)[tab] }
 export default App

@@ -34,7 +34,7 @@ export function FoldersPage({ courses, onOpenCourse }: { courses: Course[]; onOp
     ]).then(([folderResult, membershipResult]) => {
       if (cancelled) return
       if (folderResult.error || membershipResult.error) {
-        setError('No se pudieron cargar las carpetas. Verifica que ejecutaste la migración 004.')
+        setError('No pudimos cargar tus carpetas. Inténtalo de nuevo más tarde.')
         return
       }
       setFolders(folderResult.data || [])

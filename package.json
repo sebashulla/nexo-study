@@ -8,9 +8,12 @@
     "dev:api": "node server.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "start:api": "node server.mjs"
+    "start:api": "node server.mjs",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@fontsource/dm-sans": "^5.3.0",
+    "@fontsource/manrope": "^5.3.0",
     "@supabase/supabase-js": "latest",
     "@vitejs/plugin-react": "latest",
     "katex": "^0.18.7",
@@ -20,6 +23,7 @@
     "vite": "latest"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/katex": "^0.16.8",
     "@types/react": "latest",
     "@types/react-dom": "latest"

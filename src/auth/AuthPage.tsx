@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { supabase, supabaseConfigured } from '../lib/supabase'
 import { BrandLogo } from '../BrandLogo'
+import { useAuth } from './AuthContext'
+import { authErrorMessage } from './authErrors'
 
-type Mode = 'login' | 'signup'
+type Mode = 'login' | 'signup' | 'forgot'
 type PersonType = 'universidad' | 'instituto' | 'preuniversitario' | 'colegio' | 'profesional' | 'otro'
 
 type SignupData = {
@@ -57,6 +59,7 @@ function suggestedUsername(fullName: string) {
 }
 
 export function AuthPage() {
+  const { recovering, session, finishRecovery } = useAuth()
   const [mode, setMode] = useState<Mode>('login')
   const [loginEmail, setLoginEmail] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
@@ -68,12 +71,15 @@ export function AuthPage() {
   const [launching, setLaunching] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
 
   const totalSteps = 6
   const progress = useMemo(() => ((step + 1) / totalSteps) * 100, [step])
 
   const switchMode = (next: Mode) => {
-    setMode(next); setError(''); setMessage(''); setStep(0); setLaunching(false)
+    setMode(next); setError(''); setMessage(''); setStep(0); setLaunching(false); setShowPassword(false)
   }
 
   const validateStep = async () => {
@@ -89,7 +95,7 @@ export function AuthPage() {
       setCheckingUsername(true)
       const { data, error: rpcError } = await supabase.rpc('is_username_available', { candidate: signup.username })
       setCheckingUsername(false)
-      if (rpcError) throw new Error('No se pudo validar el usuario. Ejecuta la migración SQL 003 y vuelve a intentarlo.')
+      if (rpcError) throw new Error('No pudimos comprobar ese usuario. Inténtalo de nuevo en unos momentos.')
       if (!data) throw new Error('Ese nombre de usuario ya está ocupado. Prueba con otro.')
     }
     if (step === 2 && !signup.personType) throw new Error('Selecciona la opción que mejor describe tu etapa actual.')
@@ -102,6 +108,7 @@ export function AuthPage() {
   }
 
   const nextStep = async () => {
+    if (checkingUsername || busy) return
     try {
       await validateStep()
       if (step < totalSteps - 1) {
@@ -121,18 +128,18 @@ export function AuthPage() {
 
   const login = async (event: React.FormEvent) => {
     event.preventDefault()
-    if (!supabase) return
+    if (!supabase || busy) return
     setBusy(true); setError(''); setMessage('')
     try {
       const { error: authError } = await supabase.auth.signInWithPassword({ email: loginEmail.trim(), password: loginPassword })
       if (authError) throw authError
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo iniciar sesión.')
+      setError(authErrorMessage(err))
     } finally { setBusy(false) }
   }
 
   const createAccount = async () => {
-    if (!supabase) return
+    if (!supabase || busy) return
     setBusy(true); setError(''); setMessage('')
     try {
       await validateStep()
@@ -152,7 +159,7 @@ export function AuthPage() {
           emailRedirectTo: window.location.origin,
         },
       })
-      if (authError) throw authError
+      if (authError) { setError(authErrorMessage(authError)); sessionStorage.removeItem('nexo-onboarding-launch'); return }
       setLaunching(true)
       window.setTimeout(() => {
         if (!data.session) {
@@ -168,27 +175,73 @@ export function AuthPage() {
     } finally { setBusy(false) }
   }
 
+  const recoverPassword = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!supabase || busy) return
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(loginEmail.trim(), { redirectTo: `${window.location.origin}/reset-password` })
+      if (error) throw error
+      setMessage('Si hay una cuenta con ese correo, recibirás un enlace para cambiar tu contraseña. Revisa también spam.')
+    } catch (err) { setError(authErrorMessage(err)) }
+    finally { setBusy(false) }
+  }
+
+  const updatePassword = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!supabase || busy) return
+    setError('')
+    if (newPassword !== confirmPassword) { setError('Las contraseñas no coinciden.'); return }
+    setBusy(true)
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if (error) throw error
+      finishRecovery()
+    } catch (err) { setError(authErrorMessage(err)) }
+    finally { setBusy(false) }
+  }
+
+  if (recovering) return <main className="auth-shell"><section className="auth-card">
+    <BrandLogo className="auth-brand-image"/><p className="auth-kicker">RECUPERA TU ESPACIO</p><h1>Nueva contraseña</h1>
+    {session ? <><p className="auth-subtitle">Elige una contraseña para volver a tu estudio.</p><form className="auth-form" onSubmit={updatePassword}>
+      <label>Nueva contraseña<input required minLength={6} type="password" autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)}/></label>
+      <label>Confirmar contraseña<input required minLength={6} type="password" autoComplete="new-password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}/></label>
+      {error && <div role="alert" className="auth-alert error">{error}</div>}
+      <button className="primary auth-submit" disabled={busy}>{busy ? 'Guardando…' : 'Guardar contraseña'}</button>
+    </form></> : <><p className="auth-subtitle">El enlace ya no es válido o ha caducado. Solicita uno nuevo para continuar.</p><button className="primary" onClick={() => { finishRecovery(); switchMode('forgot') }}>Solicitar otro enlace</button></>}
+  </section></main>
+
   if (!supabaseConfigured) {
     return <main className="auth-shell"><section className="auth-card setup-card"><BrandLogo className="auth-brand-image"/><p className="auth-kicker">CONFIGURACIÓN PENDIENTE</p><h1>Conecta Supabase para activar la beta</h1><p>Agrega <code>VITE_SUPABASE_URL</code> y <code>VITE_SUPABASE_ANON_KEY</code> en tu archivo <code>.env.local</code> o en Vercel.</p><div className="auth-info">Después ejecuta las migraciones de la carpeta <strong>sql/</strong> en orden.</div></section></main>
   }
 
   if (launching) return <main className="auth-shell launch-shell"><section className="launch-card"><BrandLogo className="launch-brand"/><div className="rocket-stage"><span className="rocket">🚀</span><i className="rocket-trail"/><i className="star s1">✦</i><i className="star s2">✧</i><i className="star s3">✦</i></div><p className="auth-kicker">NEXO ESTÁ PREPARANDO TU ESPACIO</p><h1>Configurando lo que necesitas</h1><p>Organizando tu experiencia para que estudiar se sienta más tuyo.</p><div className="launch-loader"><span/></div></section></main>
 
-  if (mode === 'login') return <main className="auth-shell">
-    <section className="auth-card">
-      <BrandLogo className="auth-brand-image"/>
-      <p className="auth-kicker">NEXO STUDY · BETA</p>
-      <h1>Bienvenido de vuelta</h1>
-      <p className="auth-subtitle">Continúa donde dejaste tu estudio.</p>
-      <form onSubmit={login} className="auth-form">
-        <label>Correo<input required type="email" autoComplete="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="tu@correo.com" /></label>
-        <label>Contraseña<input required type="password" autoComplete="current-password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder="Tu contraseña" /></label>
-        {error && <div className="auth-alert error">{error}</div>}
-        {message && <div className="auth-alert success">{message}</div>}
-        <button className="primary auth-submit" disabled={busy}>{busy ? 'Entrando…' : 'Iniciar sesión'}</button>
-      </form>
-      <div className="auth-links"><button onClick={() => switchMode('signup')}>Crear una cuenta</button></div>
+  if (mode === 'login' || mode === 'forgot') return <main className="auth-shell auth-login-shell">
+    <div className="auth-layout">
+    <section className="auth-story" aria-label="Tu espacio de estudio con Nexo">
+      <div className="story-badge"><span/> APRENDE A TU RITMO</div>
+      <h2>Menos caos.<br/>Más <em>claridad.</em></h2>
+      <p>Tus apuntes son el comienzo.<br/>Conviértelos en lo que sabes.</p>
+      <div className="study-preview" aria-hidden="true"><div className="preview-top"><span>✦ TU PRÓXIMA SESIÓN</span><span>•••</span></div><h3>Una idea a la vez.</h3><p>De tus materiales a tu próximo logro.</p><div className="preview-flow"><span>01 <b>Organiza</b></span><i>→</i><span>02 <b>Comprende</b></span><i>→</i><span>03 <b>Practica</b></span></div><div className="preview-line"><i/><i/><i/></div><div className="preview-bottom"><span>Resumen · Flashcards · Quiz</span><b>↗</b></div></div>
+      <div className="story-footer"><span>✦</span> Un espacio para todo lo que quieres aprender.</div>
     </section>
+    <section className="auth-card login-card">
+      <BrandLogo className="auth-brand-image"/>
+      <p className="auth-kicker">{mode === 'forgot' ? 'VOLVAMOS A CONECTAR' : 'TU ESTUDIO, A TU MANERA'}</p>
+      <h1>{mode === 'forgot' ? '¿Olvidaste tu contraseña?' : 'Qué bueno verte.'}</h1>
+      <p className="auth-subtitle">{mode === 'forgot' ? 'Te enviaremos un enlace para recuperar tu cuenta.' : 'Entra a tu espacio y continúa aprendiendo.'}</p>
+      <form onSubmit={mode === 'forgot' ? recoverPassword : login} className="auth-form">
+        <label htmlFor="login-email">Correo electrónico</label><input id="login-email" required type="email" inputMode="email" autoCapitalize="none" spellCheck={false} autoComplete="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="tu@correo.com" />
+        {mode === 'login' && <><label htmlFor="login-password">Contraseña</label><div className="password-field"><input id="login-password" required type={showPassword ? 'text' : 'password'} autoComplete="current-password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder="Tu contraseña" /><button type="button" aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'} aria-pressed={showPassword} onClick={() => setShowPassword(value => !value)}>{showPassword ? 'Ocultar' : 'Mostrar'}</button></div><button type="button" className="forgot-link" disabled={busy} onClick={() => switchMode('forgot')}>¿Olvidaste tu contraseña?</button></>}
+        {error && <div role="alert" className="auth-alert error">{error}</div>}
+        {message && <div role="status" className="auth-alert success">{message}</div>}
+        <button className="primary auth-submit" disabled={busy}>{busy ? 'Un momento…' : mode === 'forgot' ? 'Enviar enlace' : 'Iniciar sesión →'}</button>
+      </form>
+      <div className="auth-links">{mode === 'login' ? <><span>¿Primera vez aquí?</span><button disabled={busy} onClick={() => switchMode('signup')}>Crear una cuenta</button></> : <button disabled={busy} onClick={() => switchMode('login')}>← Volver al inicio de sesión</button>}</div>
+      <p className="auth-footnote">Tu próximo logro empieza con una idea.</p>
+    </section>
+    </div>
   </main>
 
   return <main className="auth-shell onboarding-shell">
@@ -213,7 +266,7 @@ export function AuthPage() {
         {step === 5 && <><p className="auth-kicker">LISTO, AHORA GUARDAMOS TU ESPACIO</p><h1>Crea tus datos de acceso</h1><p className="auth-subtitle">Tu progreso quedará vinculado a esta cuenta.</p><div className="credential-grid"><label>Correo<input autoFocus type="email" autoComplete="email" value={signup.email} onChange={e => setSignup(current => ({ ...current, email: e.target.value }))} placeholder="tu@correo.com" /></label><label>Contraseña<input type="password" autoComplete="new-password" value={signup.password} onChange={e => setSignup(current => ({ ...current, password: e.target.value }))} placeholder="Mínimo 6 caracteres" onKeyDown={e => e.key === 'Enter' && createAccount()} /></label></div><div className="signup-summary"><span>🎓</span><div><strong>@{signup.username}</strong><small>{signup.studyArea} · {signup.goal}</small></div></div></>}
       </div>
 
-      {error && <div className="auth-alert error onboarding-error">{error}</div>}
+      {error && <div role="alert" className="auth-alert error onboarding-error">{error}</div>}
       <div className="onboarding-actions"><button className="secondary" onClick={previousStep}>← Atrás</button>{step < totalSteps - 1 ? <button className="primary" onClick={nextStep} disabled={checkingUsername}>{checkingUsername ? 'Comprobando…' : 'Continuar →'}</button> : <button className="primary" onClick={createAccount} disabled={busy}>{busy ? 'Creando tu espacio…' : 'Crear mi espacio →'}</button>}</div>
       <button className="onboarding-login-link" onClick={() => switchMode('login')}>Ya tengo una cuenta</button>
     </section>

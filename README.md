@@ -82,6 +82,21 @@ npm install
 npm run dev
 ```
 
+## Comprobación de interfaz
+
+La interfaz se adapta a escritorio, tabletas y navegadores móviles iOS y Android. El acceso, recuperación de contraseña y registro se comprueban con respuestas simuladas de Supabase, sin crear cuentas ni enviar correos reales:
+
+```bash
+npx playwright install chromium webkit
+npm run test:e2e
+```
+
+Las pruebas recorren las secciones principales en Chrome, Safari/WebKit, un iPhone, un Android y una pantalla de 320 px. Para probar un inicio de sesión real, configura Supabase y utiliza una cuenta de prueba del proyecto.
+
+Para que los enlaces de recuperación vuelvan a la aplicación, añade `http://localhost:5173/reset-password` y `https://TU-DOMINIO/reset-password` a las URL de redirección permitidas en Supabase Auth.
+
+Los cursos y materiales todavía se guardan en el navegador. Aunque la interfaz se adapta a ambos sistemas móviles, este contenido no se sincroniza entre dispositivos.
+
 En otro terminal para Nexo IA:
 
 ```bash
