@@ -107,8 +107,11 @@ test('a real PDF opens its workspace, contextual Nexo and study mode', async ({ 
   await expect(page.getByRole('heading', { name: 'celula' }).first()).toBeVisible()
   await expect(page.locator('.material-document iframe')).toBeVisible()
   if (page.viewportSize()!.width > 700) {
+    await page.locator('.material-layout-menu summary').click()
     await page.getByRole('group', { name: 'Proporción entre documento y Nexo' }).getByRole('button', { name: '70/30' }).click()
+    await page.locator('.material-layout-menu summary').click()
     await expect(page.getByRole('button', { name: '70/30' })).toHaveAttribute('aria-pressed', 'true')
+    await page.locator('.material-layout-menu summary').click()
   }
   if (page.viewportSize()!.width <= 700) await page.getByRole('tab', { name: 'Nexo IA' }).click()
   await expect(page.locator('.material-topic')).toContainText('La celula contiene un nucleo')
@@ -195,6 +198,14 @@ test('main workspaces fit common desktop widths', async ({ page }) => {
 
 test('course Nexo retrieves relevant material and a study session survives refresh', async ({ page }) => {
   let payload: Record<string, unknown> | undefined
+  const sessionEvents: string[] = []
+  await page.route('**/rest/v1/study_session_events**', route => {
+    if (route.request().method() === 'POST') {
+      const body = route.request().postDataJSON()
+      sessionEvents.push(...(Array.isArray(body) ? body : [body]).map(item => String(item.activity_type)))
+    }
+    return route.fulfill({ status: 201, json: [] })
+  })
   await page.route('**/api/ai/solve', route => {
     payload = route.request().postDataJSON()
     return route.fulfill({ json: { text: 'La membrana regula el intercambio de sustancias.' } })
@@ -214,6 +225,13 @@ test('course Nexo retrieves relevant material and a study session survives refre
   await page.getByRole('button', { name: 'Preparar sesión' }).click()
   await expect(page.locator('.study-session-plan li')).toHaveCount(4)
   await expect(page.getByRole('button', { name: 'Continúa tu sesión actual' })).toBeDisabled()
+  await page.locator('.study-session-plan li').nth(2).getByRole('button', { name: 'Abrir' }).click()
+  await page.locator('.flashcard').click()
+  await page.getByRole('group', { name: '¿Cómo recordaste esta tarjeta?' }).getByRole('button', { name: 'Bien' }).click()
+  await page.goto('/courses/course-bio/practice')
+  await page.locator('.study-session-plan li').nth(1).getByRole('button', { name: 'Abrir' }).click()
+  await page.locator('.quiz-card .options button').first().click()
+  await page.goto('/courses/course-bio/practice')
   await page.locator('.study-session-plan li').first().getByRole('button', { name: 'Marcar hecho' }).click()
   await expect(page.locator('.study-session-plan')).toContainText('1/4 actividades terminadas')
   await page.reload()
@@ -223,6 +241,9 @@ test('course Nexo retrieves relevant material and a study session survives refre
   await page.goto('/courses/course-bio/progress')
   await expect(page.locator('.progress-session-summary')).toContainText('1 sesiones completadas')
   await expect(page.locator('.progress-session-summary')).toContainText('4 actividades de sesión terminadas')
+  await expect.poll(() => sessionEvents).toContain('flashcard_answer')
+  await expect.poll(() => sessionEvents).toContain('quiz_answer')
+  await expect.poll(() => sessionEvents).toContain('session_complete')
 })
 
 test('written questions are generated on demand and cached', async ({ page }) => {
@@ -261,6 +282,9 @@ test('exam mixes prepared question types and gives contextual written feedback',
   await page.getByRole('button', { name: 'Preparar opción múltiple' }).click()
   await page.getByRole('button', { name: 'Preparar preguntas escritas' }).click()
   await page.getByRole('button', { name: 'Preparar completar espacios' }).click()
+  await page.getByRole('button', { name: 'Preparar simulacro' }).click()
+  await expect(page.getByRole('heading', { name: 'Pregunta de elección 1' })).toBeVisible()
+  await page.reload()
   await expect(page.getByRole('heading', { name: 'Pregunta de elección 1' })).toBeVisible()
   await page.locator('.exam-options').getByRole('button', { name: 'A' }).click()
   await page.getByRole('button', { name: 'Siguiente →' }).click()

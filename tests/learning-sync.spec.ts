@@ -18,7 +18,9 @@ test('courses and material text restore from the academic repository after local
     if (!tables.has(table)) return route.fulfill({ json: [] })
     const rows = academic.get(table) ?? new Map<string, Record<string, unknown>>()
     academic.set(table, rows)
-    if (route.request().method() === 'GET') return route.fulfill({ json: [...rows.values()].filter(row => row.user_id === user.id) })
+    if (route.request().method() === 'GET') return route.fulfill({ json: [...rows.values()].filter(row =>
+      row.user_id === user.id && [...url.searchParams].every(([key, value]) =>
+        !value.startsWith('eq.') || String(row[key]) === value.slice(3))) })
     if (route.request().method() === 'POST') {
       const body = route.request().postDataJSON()
       const items = Array.isArray(body) ? body : [body]

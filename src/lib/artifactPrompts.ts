@@ -63,7 +63,7 @@ const promptByType: Record<Exclude<StudyArtifactType, 'summary' | 'exam'>, strin
 }
 
 function sampledContext(material: Material) {
-  const chunks = material.chunks?.length ? material.chunks : chunksForMaterial(material)
+  const chunks = material.chunks?.length ? material.chunks : material.text.length <= 15000 ? chunksForMaterial(material) : []
   const count = Math.min(chunks.length, 6)
   const chosen = Array.from({ length: count }, (_, index) => chunks[Math.round(index * (chunks.length - 1) / Math.max(1, count - 1))])
   return chosen.map(chunk => `[Página ${chunk.pageStart}${chunk.pageEnd !== chunk.pageStart ? `–${chunk.pageEnd}` : ''}] ${chunk.text}`).join('\n\n').slice(0, 15000)

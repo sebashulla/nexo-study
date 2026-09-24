@@ -2,6 +2,8 @@ export type NexoAiMode = 'standard' | 'deep'
 
 export type MaterialPage = { page: number; text: string }
 export type ProcessingStatus = 'queued' | 'processing' | 'ready' | 'failed'
+export type DocumentKind = 'text' | 'scan' | 'mixed' | 'unknown'
+export type AnalysisStatus = 'not_started' | 'reading' | 'indexing' | 'ready' | 'partial' | 'failed'
 export type MaterialChunk = { id: string; materialId: string; pageStart: number; pageEnd: number; text: string; keywords: string[] }
 export type MaterialTopic = { id: string; materialId: string; title: string; summary: string; pageStart?: number; pageEnd?: number; keywords: string[] }
 export type StudyArtifactType = 'summary' | 'flashcards' | 'multiple_choice' | 'written_questions' | 'fill_blanks' | 'notes' | 'exam'
@@ -19,6 +21,7 @@ export type StudyArtifact = {
 export type LearningStatus = 'unknown' | 'learning' | 'known' | 'mastered'
 export type LearningConcept = { key: string; label: string; materialId: string; status: LearningStatus; confidence: number; attempts: number; correctAttempts: number; updatedAt: string }
 export type StudySession = { id: string; courseId: string; objective: string; durationMinutes: 15 | 30 | 45; status: 'planned' | 'active' | 'completed'; plan: { type: string; minutes: number; materialId?: string }[]; results: Record<string, number>; createdAt: string; completedAt?: string }
+export type StudySessionEvent = { id: string; sessionId: string; activityType: 'flashcard_answer' | 'quiz_answer' | 'written_answer' | 'session_complete'; materialId?: string; result: { correct?: boolean; rating?: string }; createdAt: string }
 
 export type StudyFocus = 'balanced' | 'understand' | 'memorize' | 'exam'
 export type StudyLevel = 'essential' | 'university' | 'advanced'
@@ -40,6 +43,15 @@ export type Material = {
   sourceName?: string
   pages?: MaterialPage[]
   pageCount?: number
+  pdfBytes?: number
+  pdfTitle?: string
+  pdfAuthor?: string
+  documentKind?: DocumentKind
+  analysisStatus?: AnalysisStatus
+  analyzedPages?: number[]
+  analysisProgress?: { completed: number; total: number; currentPage: number }
+  remotePlaceholder?: boolean
+  contextLoaded?: boolean
   storagePath?: string
   processingStatus?: ProcessingStatus
   processingStage?: 'reading' | 'indexing' | 'saving'

@@ -1,16 +1,17 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { demoCourses } from './data/demo'
-import { extractPdf, MAX_PDF_BYTES } from './lib/documentEngine'
+import { extractPdf, INITIAL_PDF_PAGE_BUDGET, MAX_PDF_BYTES } from './lib/documentEngine'
 import { chunksForMaterial, topicsForMaterial } from './lib/learningContext'
-import { saveActivity, saveArtifact, saveCourses, saveLearningState, saveMaterialContext, saveSessions, signedPdfUrl, synchronizeCourses, uploadPrivatePdf } from './lib/learningRepository'
+import { displayMaterialTitle } from './lib/materialTitles'
+import { loadCourseArtifacts, loadCourseDetails, loadMaterialContext, saveActivity, saveArtifact, saveCourses, saveLearningState, saveMaterialContext, saveSessionEvents, saveSessions, signedPdfUrl, synchronizeCourses, uploadPrivatePdf } from './lib/learningRepository'
 import { applyRecall, loadLearningMemory, masterySummary, saveLearningMemory, type LearningMemory, type RecallRating } from './lib/learningState'
-import { buildStudySession, completeSessionStep, loadLocalSessions, saveLocalSessions, type SessionDuration, type SessionObjective } from './lib/studySessions'
+import { activateStudySession, buildStudySession, completeSessionStep, loadLocalSessionEvents, loadLocalSessions, saveLocalSessionEvents, saveLocalSessions, type SessionDuration, type SessionObjective } from './lib/studySessions'
 import { artifactFlashcards, artifactQuestions, generateArtifactWithAI } from './lib/artifactPrompts'
 import { generateStudyPack } from './lib/studyEngine'
 import { generateStudyPackWithAI } from './lib/studyAi'
 import { askMaterial } from './lib/tutorEngine'
 import { coursePath, courseSectionPath, materialPath, materialStudyPath, materialWorkspacePath, parseAppRoute, tabPath, type AppTab, type MaterialStudyMode, type CourseSection } from './lib/router'
-import type { Course, Material, StudyArtifact, StudyArtifactType, StudyFocus, StudyLevel, StudyPack, StudySession, TutorAnswer } from './types'
+import type { Course, Material, StudyArtifact, StudyArtifactType, StudyFocus, StudyLevel, StudyPack, StudySession, StudySessionEvent, TutorAnswer } from './types'
 import { useAuth } from './auth/AuthContext'
 import type { User } from '@supabase/supabase-js'
 import { BrandLogo } from './BrandLogo'
@@ -24,6 +25,7 @@ import { loadStudyActivity, saveStudyActivity, workspaceProgress, type MaterialA
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { FoldersPage } from './FoldersPage'
 import { ProgressPage } from './ProgressPage'
+import type { ExamItem } from './ExamRunner'
 
 const AuthPage = lazy(() => import('./auth/AuthPage').then(module => ({ default: module.AuthPage })))
 const AdminFeedbackPage = lazy(() => import('./AdminFeedbackPage').then(module => ({ default: module.AdminFeedbackPage })))
@@ -45,7 +47,10 @@ function recoverInterruptedWork(courses: Course[]): Course[] {
   return courses.map(course => ({ ...course, materials: course.materials.map(material => ({
     ...material,
     processingStatus: material.sourceType === 'pdf' && (material.processingStatus === 'queued' || material.processingStatus === 'processing') ? 'failed' as const : material.processingStatus,
+    analysisStatus: material.sourceType === 'pdf' && (material.analysisStatus === 'reading' || material.analysisStatus === 'indexing')
+      ? (material.chunks?.length ? 'partial' as const : 'failed' as const) : material.analysisStatus,
     processingStage: undefined,
+    analysisProgress: undefined,
     artifacts: material.artifacts?.map(artifact => artifact.status === 'queued' || artifact.status === 'processing'
       ? { ...artifact, status: 'failed' as const, errorMessage: 'La preparación se interrumpió. Puedes reintentarla.' } : artifact),
   })) }))
@@ -61,6 +66,34 @@ function withMinimumSummary(material: Material): Material {
     id: crypto.randomUUID(), type: 'summary', status: 'ready', payload: { summary },
     version: 1, sourceMaterialId: material.id, createdAt: now, updatedAt: now,
   }] }
+}
+
+function mergeRemoteActivity(remote: StudyActivity, local: StudyActivity): StudyActivity {
+  const merged = { ...remote }
+  for (const [id, value] of Object.entries(local)) {
+    if (!merged[id] || (value.lastStudiedAt ?? '') >= (merged[id].lastStudiedAt ?? '')) merged[id] = value
+  }
+  return merged
+}
+
+function mergeRemoteMemory(remote: LearningMemory, local: LearningMemory): LearningMemory {
+  const merged = { ...remote }
+  for (const [key, value] of Object.entries(local)) {
+    if (!merged[key] || value.updatedAt >= merged[key].updatedAt) merged[key] = value
+  }
+  return merged
+}
+
+function mergeRemoteSessions(local: StudySession[], remote: StudySession[]): StudySession[] {
+  const merged = new Map(local.map(session => [session.id, session]))
+  for (const session of remote) {
+    const existing = merged.get(session.id)
+    const remoteSteps = Object.values(session.results).filter(value => value === 1).length
+    const localSteps = existing ? Object.values(existing.results).filter(value => value === 1).length : 0
+    if (!existing || session.status === 'completed' && existing.status !== 'completed' || remoteSteps > localSteps)
+      merged.set(session.id, session)
+  }
+  return [...merged.values()]
 }
 
 function loadInitialCourses(userId: string): Course[] {
@@ -105,6 +138,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [activity, setActivity] = useState<StudyActivity>(() => loadStudyActivity(user.id))
   const [memory, setMemory] = useState<LearningMemory>(() => loadLearningMemory(user.id))
   const [sessions, setSessions] = useState<StudySession[]>(() => loadLocalSessions(user.id))
+  const [sessionEvents, setSessionEvents] = useState<StudySessionEvent[]>(() => loadLocalSessionEvents(user.id))
   const workspaceCourses = useMemo(() => coursesInWorkspace(courses, workspaces.memberships, workspaces.selectedId), [courses, workspaces.memberships, workspaces.selectedId])
   const [activeCourseId, setActiveCourseId] = useState(route.courseId || courses[0]?.id || '')
   const [activeMaterialId, setActiveMaterialId] = useState(route.materialId || courses[0]?.materials[0]?.id || '')
@@ -144,8 +178,13 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [aiGeneratingMaterialId, setAiGeneratingMaterialId] = useState<string | null>(null)
   const [aiGenerationErrors, setAiGenerationErrors] = useState<Record<string, string>>({})
   const [pdfFiles, setPdfFiles] = useState<Record<string, File>>({})
+  const pdfJobsRef = useRef<Map<string, AbortController>>(new Map())
+  const loadedCoursesRef = useRef<Set<string>>(new Set())
+  const loadedMaterialsRef = useRef<Set<string>>(new Set())
+  const loadedLibrariesRef = useRef<Set<string>>(new Set())
   const [sourceJump, setSourceJump] = useState<{ materialId: string; page: number } | null>(null)
   const remoteQueueRef = useRef<Promise<void>>(Promise.resolve())
+  const savedEventIdsRef = useRef<Set<string>>(new Set())
   const savedRemoteSnapshotRef = useRef<Record<'courses' | 'activity' | 'memory' | 'sessions', string>>({
     courses: '', activity: '', memory: '', sessions: '',
   })
@@ -164,12 +203,9 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
           return existing ? { ...course, materials: [...course.materials, ...existing.materials.filter(item => !materialIds.has(item.id))] } : course
         }), ...current.filter(course => !remoteIds.has(course.id))]
       })
-      setActivity(current => ({ ...result.activity, ...current }))
-      setMemory(current => ({ ...result.memory, ...current }))
-      setSessions(current => {
-        const localIds = new Set(current.map(session => session.id))
-        return [...current, ...result.sessions.filter(session => !localIds.has(session.id))]
-      })
+      setActivity(current => mergeRemoteActivity(result.activity, current))
+      setMemory(current => mergeRemoteMemory(result.memory, current))
+      setSessions(current => mergeRemoteSessions(current, result.sessions))
       setRemoteEnabled(true)
       setSyncError('')
     }).catch(() => {
@@ -202,20 +238,29 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
           await saveSessions(user.id, sessions)
           savedRemoteSnapshotRef.current.sessions = snapshot.sessions
         }
+        const pendingEvents = sessionEvents.filter(event => !savedEventIdsRef.current.has(event.id))
+        if (pendingEvents.length) {
+          await saveSessionEvents(user.id, pendingEvents)
+          for (const event of pendingEvents) savedEventIdsRef.current.add(event.id)
+        }
         setSyncError('')
       }).catch(() => setSyncError('No pudimos sincronizar los últimos cambios. Permanecen guardados en este navegador.'))
     }, 500)
     return () => window.clearTimeout(timer)
-  }, [user.id, courses, activity, memory, sessions, learningReady, remoteEnabled, syncRetry])
+  }, [user.id, courses, activity, memory, sessions, sessionEvents, learningReady, remoteEnabled, syncRetry])
 
   const retrySynchronization = () => {
     savedRemoteSnapshotRef.current = { courses: '', activity: '', memory: '', sessions: '' }
+    loadedCoursesRef.current.clear()
+    loadedMaterialsRef.current.clear()
+    loadedLibrariesRef.current.clear()
+    savedEventIdsRef.current.clear()
     setSyncError('')
     setSyncRetry(value => value + 1)
   }
 
   useEffect(() => {
-    const onPopState = () => { setPathname(window.location.pathname); setShowAccountMenu(false) }
+    const onPopState = () => { setPathname(window.location.pathname); setShowAccountMenu(false); setMobileSidebarOpen(false) }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
@@ -237,6 +282,8 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
 
   useEffect(() => {
     if (!mobileSidebarOpen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
     sidebarRef.current?.querySelector<HTMLButtonElement>('.sidebar-mobile-close')?.focus()
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setMobileSidebarOpen(false); mobileMenuRef.current?.focus() }
@@ -250,7 +297,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
       }
     }
     document.addEventListener('keydown', closeOnEscape)
-    return () => document.removeEventListener('keydown', closeOnEscape)
+    return () => { document.removeEventListener('keydown', closeOnEscape); document.body.style.overflow = previousOverflow }
   }, [mobileSidebarOpen])
 
   useEffect(() => {
@@ -278,12 +325,41 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     catch { setStorageError('No pudimos guardar tus sesiones en este navegador.') }
   }, [sessions, user.id])
 
+  useEffect(() => {
+    try { saveLocalSessionEvents(user.id, sessionEvents) }
+    catch { setStorageError('No pudimos guardar los eventos de esta sesión en este navegador.') }
+  }, [sessionEvents, user.id])
+
   const recordActivity = useCallback((materialId: string, updater: (value: MaterialActivity) => MaterialActivity) => {
     setActivity(current => ({ ...current, [materialId]: { ...updater(current[materialId] ?? {}), lastStudiedAt: new Date().toISOString() } }))
   }, [])
   const recordRecall = useCallback((materialId: string, label: string, rating: RecallRating) => {
     setMemory(current => applyRecall(current, materialId, label, rating))
   }, [])
+
+  const recordSessionEvent = (activityType: StudySessionEvent['activityType'], materialId?: string,
+    result: StudySessionEvent['result'] = {}, sessionId?: string) => {
+    const session = sessions.find(item => item.id === sessionId) ?? sessions.find(item => item.status !== 'completed' &&
+      item.plan.some(step => step.materialId === materialId))
+    if (!session) return
+    setSessions(current => current.map(item => item.id === session.id ? activateStudySession(item) : item))
+    setSessionEvents(current => [...current, { id: crypto.randomUUID(), sessionId: session.id,
+      activityType, materialId, result, createdAt: new Date().toISOString() }])
+  }
+
+  const recordFlashcardRating = (materialId: string, concept: string, rating: RecallRating) => {
+    recordRecall(materialId, concept, rating)
+    recordSessionEvent('flashcard_answer', materialId, { rating })
+  }
+  const recordQuizAnswer = (materialId: string, concept: string, index: number, correct: boolean) => {
+    recordActivity(materialId, value => ({ ...value, answers: { ...value.answers, [`quiz:${index}`]: correct } }))
+    recordRecall(materialId, concept, correct ? 'good' : 'again')
+    recordSessionEvent('quiz_answer', materialId, { correct })
+  }
+  const recordMethodPractice = (materialId: string, type: 'written_questions' | 'fill_blanks' | 'exam', index: number, correct: boolean) => {
+    recordActivity(materialId, value => ({ ...value, practiceAttempts: { ...value.practiceAttempts, [`${type}:${index}`]: correct } }))
+    recordSessionEvent(type === 'written_questions' ? 'written_answer' : 'quiz_answer', materialId, { correct })
+  }
 
   const prepareSession = (course: Course, minutes: SessionDuration, objective: SessionObjective) => {
     const active = sessions.find(session => session.courseId === course.id && session.status !== 'completed')
@@ -297,9 +373,16 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     if (!session || session.results[String(step)] === 1) return
     const materialId = session.plan[step]?.materialId
     setSessions(current => current.map(item => item.id === sessionId ? completeSessionStep(item, step) : item))
+    if (completeSessionStep(session, step).status === 'completed') recordSessionEvent('session_complete', undefined, {}, sessionId)
     if (materialId) recordActivity(materialId, value => ({ ...value,
       sessionSteps: [...new Set([...(value.sessionSteps ?? []), `${sessionId}:${step}`])],
     }))
+  }
+
+  const openPracticeActivity = (sessionId: string, materialId: string, mode: MaterialStudyMode) => {
+    setSessions(current => current.map(item => item.id === sessionId ? activateStudySession(item) : item))
+    const session = sessions.find(item => item.id === sessionId)
+    if (session) navigate(materialStudyPath(session.courseId, materialId, mode))
   }
 
   useEffect(() => {
@@ -323,6 +406,14 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   }, [route.courseId, route.materialId])
 
   useEffect(() => {
+    for (const [materialId, controller] of pdfJobsRef.current) {
+      if (route.materialId !== materialId) controller.abort()
+    }
+  }, [route.materialId])
+
+  useEffect(() => () => { for (const controller of pdfJobsRef.current.values()) controller.abort() }, [])
+
+  useEffect(() => {
     if (!route.materialStudyMode) return
     const legacyMode: Record<MaterialStudyMode, StudyMode> = {
       learn: 'tutor', flashcards: 'flashcards', 'multiple-choice': 'quiz', written: 'tutor',
@@ -342,6 +433,88 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const activeMaterial = activeCourse
     ? (route.materialId ? activeCourse.materials.find(material => material.id === route.materialId) : (activeCourse.materials.find(material => material.id === activeMaterialId) ?? activeCourse.materials[0]))
     : undefined
+  const weakConcepts = activeCourse ? masterySummary(memory, activeCourse.materials.map(material => material.id)).weak.slice(0, 3) : []
+
+  useEffect(() => {
+    const courseId = route.courseId
+    if (!remoteEnabled || !courseId || loadedCoursesRef.current.has(courseId)) return
+    loadedCoursesRef.current.add(courseId)
+    let live = true
+    let finished = false
+    void loadCourseDetails(user.id, courseId).then(result => {
+      finished = true
+      if (!live) return
+      setCourses(current => current.map(course => {
+        if (course.id !== courseId) return course
+        const remoteIds = new Set(result.materials.map(material => material.id))
+        const materials = result.materials.map(material => {
+          const local = course.materials.find(item => item.id === material.id)
+          if (!local) return material
+          if (local.analysisStatus === 'reading' || local.analysisStatus === 'indexing') return { ...local, remotePlaceholder: false }
+          return { ...material, text: material.text || local.text, pages: material.pages?.length ? material.pages : local.pages,
+            chunks: local.chunks, topics: local.topics, artifacts: local.artifacts, contextLoaded: local.contextLoaded }
+        })
+        return { ...course, materials: [...materials, ...course.materials.filter(material => !remoteIds.has(material.id))] }
+      }))
+      setActivity(current => mergeRemoteActivity(result.activity, current))
+      setMemory(current => mergeRemoteMemory(result.memory, current))
+      setSessions(current => mergeRemoteSessions(current, result.sessions))
+    }).catch(() => {
+      loadedCoursesRef.current.delete(courseId)
+      if (live) setSyncError('No pudimos cargar este curso desde tu cuenta. Puedes reintentar la sincronización.')
+    })
+    return () => { live = false; if (!finished) loadedCoursesRef.current.delete(courseId) }
+  }, [remoteEnabled, route.courseId, user.id, syncRetry])
+
+  useEffect(() => {
+    const materialId = route.materialId
+    if (!remoteEnabled || !materialId || !activeMaterial || loadedMaterialsRef.current.has(materialId)) return
+    if (activeMaterial.contextLoaded || (activeMaterial.chunks?.length && activeMaterial.artifacts?.length)) return
+    loadedMaterialsRef.current.add(materialId)
+    let live = true
+    let finished = false
+    void loadMaterialContext(user.id, materialId).then(result => {
+      finished = true
+      if (!live) return
+      setCourses(current => current.map(course => ({ ...course, materials: course.materials.map(material => {
+        if (material.id !== materialId) return material
+        const remoteArtifactKeys = new Set(result.artifacts.map(artifact => `${artifact.type}:${artifact.version}`))
+        const localArtifacts = material.artifacts?.filter(artifact => !remoteArtifactKeys.has(`${artifact.type}:${artifact.version}`)) ?? []
+        const chunks = result.chunks.length ? result.chunks : material.chunks ?? []
+        return { ...material, chunks, topics: result.topics.length ? result.topics : material.topics,
+          artifacts: [...result.artifacts, ...localArtifacts],
+          text: material.text || (material.sourceType === 'pdf' ? chunks.map(chunk => chunk.text).join('\n\n').slice(0, 30000) : ''),
+          contextLoaded: true }
+      }) })))
+    }).catch(() => {
+      loadedMaterialsRef.current.delete(materialId)
+      if (live) setSyncError('No pudimos cargar el análisis de este material. Puedes reintentar la sincronización.')
+    })
+    return () => { live = false; if (!finished) loadedMaterialsRef.current.delete(materialId) }
+  }, [remoteEnabled, route.materialId, activeMaterial?.id, activeMaterial?.contextLoaded, user.id, syncRetry])
+
+  useEffect(() => {
+    const courseId = route.courseId
+    if (!remoteEnabled || !courseId || route.courseSection !== 'library' || loadedLibrariesRef.current.has(courseId)) return
+    loadedLibrariesRef.current.add(courseId)
+    let live = true
+    let finished = false
+    void loadCourseArtifacts(user.id, courseId).then(artifacts => {
+      finished = true
+      if (!live) return
+      setCourses(current => current.map(course => course.id !== courseId ? course : { ...course,
+        materials: course.materials.map(material => {
+          const remote = artifacts.filter(artifact => artifact.sourceMaterialId === material.id)
+          const keys = new Set(remote.map(artifact => `${artifact.type}:${artifact.version}`))
+          return { ...material, artifacts: [...remote, ...(material.artifacts ?? []).filter(artifact => !keys.has(`${artifact.type}:${artifact.version}`))] }
+        }),
+      }))
+    }).catch(() => {
+      loadedLibrariesRef.current.delete(courseId)
+      if (live) setSyncError('No pudimos cargar la biblioteca de este curso. Puedes reintentar la sincronización.')
+    })
+    return () => { live = false; if (!finished) loadedLibrariesRef.current.delete(courseId) }
+  }, [remoteEnabled, route.courseId, route.courseSection, user.id, syncRetry])
 
   useEffect(() => { setQuizAnswers({}); setFlashIndex(0); setFlashRevealed(false) }, [activeMaterial?.id])
 
@@ -430,6 +603,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
       pages: materialPages,
       pageCount: materialPages?.length,
       processingStatus: 'ready',
+      documentKind: 'text', analysisStatus: 'ready',
     }
     const chunks = chunksForMaterial(baseMaterial)
     const material = withMinimumSummary({ ...baseMaterial, chunks, topics: topicsForMaterial(baseMaterial, chunks) })
@@ -451,10 +625,15 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     })()
   }
 
-  const processPdfMaterial = (course: Course, material: Material, file: File) => {
+  const processPdfMaterial = (course: Course, material: Material, file: File, requestedPages?: number[]) => {
     setSyncError('')
+    for (const controller of pdfJobsRef.current.values()) controller.abort()
+    const controller = new AbortController()
+    pdfJobsRef.current.set(material.id, controller)
     void (async () => {
       let uploadedPath = material.storagePath
+      let accumulatedChunks = requestedPages ? [...(material.chunks ?? [])] : []
+      const existingChunkCount = accumulatedChunks.length
       const upload = remoteEnabled ? (async () => {
         try {
           await saveCourses(user.id, [{ ...course, materials: [material] }])
@@ -464,12 +643,41 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
         } catch { setSyncError('El PDF está disponible en esta sesión, pero no pudimos guardarlo en tu cuenta. Revisa la conexión y vuelve a intentarlo.') }
       })() : Promise.resolve()
       try {
-        updateMaterial(course.id, material.id, current => ({ ...current, processingStatus: 'processing', processingStage: 'reading' }))
-        const extracted = await extractPdf(file)
-        updateMaterial(course.id, material.id, current => ({ ...current, processingStage: 'indexing', pageCount: extracted.pages.length }))
-        const withText: Material = { ...material, text: extracted.text, pages: extracted.pages, pageCount: extracted.pages.length, processingStatus: 'processing', processingStage: 'indexing' }
-        const chunks = chunksForMaterial(withText)
-        const ready = withMinimumSummary({ ...withText, chunks, topics: topicsForMaterial(withText, chunks), processingStatus: 'ready', processingStage: undefined })
+        updateMaterial(course.id, material.id, current => ({ ...current, processingStatus: 'processing', processingStage: 'reading', analysisStatus: 'reading', analysisProgress: undefined }))
+        const extracted = await extractPdf(file, {
+          signal: controller.signal, pages: requestedPages,
+          onMetadata: metadata => updateMaterial(course.id, material.id, current => ({ ...current,
+            pageCount: metadata.pageCount, pdfBytes: metadata.byteSize, pdfTitle: metadata.title, pdfAuthor: metadata.author,
+          })),
+          onBatch: (pages, progress) => {
+            if (controller.signal.aborted) return
+            if (pages.length) accumulatedChunks.push(...chunksForMaterial({ ...material, text: '', pages }))
+            updateMaterial(course.id, material.id, current => ({ ...current,
+              chunks: accumulatedChunks, text: accumulatedChunks.map(chunk => chunk.text).join('\n\n').slice(0, 30000), pages: undefined,
+              analyzedPages: [...new Set([...(current.analyzedPages ?? []), ...progress.analyzedPages])].sort((a, b) => a - b),
+              processingStage: 'reading', analysisStatus: 'reading',
+              analysisProgress: { completed: progress.completed, total: progress.total, currentPage: progress.currentPage },
+            }))
+          },
+        })
+        updateMaterial(course.id, material.id, current => ({ ...current, processingStage: 'indexing', analysisStatus: 'indexing' }))
+        const analyzedPages = [...new Set([...(requestedPages ? material.analyzedPages ?? [] : []), ...extracted.analyzedPages])].sort((a, b) => a - b)
+        const textPages = new Set(accumulatedChunks.map(chunk => chunk.pageStart)).size
+        const ratio = analyzedPages.length ? textPages / analyzedPages.length : 0
+        const kind = ratio < 0.1 ? 'scan' : ratio < 0.85 ? 'mixed' : 'text'
+        const base: Material = { ...material,
+          text: accumulatedChunks.map(chunk => chunk.text).join('\n\n').slice(0, 30000), pages: undefined,
+          chunks: accumulatedChunks,
+          topics: requestedPages
+            ? [...(material.topics ?? []), ...topicsForMaterial(material, accumulatedChunks.slice(existingChunkCount))]
+            : topicsForMaterial(material, accumulatedChunks),
+          pageCount: extracted.metadata.pageCount, pdfBytes: extracted.metadata.byteSize,
+          pdfTitle: extracted.metadata.title, pdfAuthor: extracted.metadata.author,
+          documentKind: kind, analyzedPages,
+          analysisStatus: analyzedPages.length < extracted.metadata.pageCount || kind !== 'text' ? 'partial' : 'ready',
+          processingStatus: 'ready', processingStage: undefined, analysisProgress: undefined,
+        }
+        const ready = withMinimumSummary(base)
         updateMaterial(course.id, material.id, current => ({ ...current, ...ready, storagePath: current.storagePath ?? uploadedPath }))
         await upload
         if (remoteEnabled) {
@@ -480,14 +688,30 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
           } catch { setSyncError('El material se leyó, pero la sincronización de sus temas está pendiente. Conservamos una copia en este navegador.') }
         }
       } catch (error) {
-        updateMaterial(course.id, material.id, current => ({ ...current, processingStatus: 'failed', processingStage: undefined }))
+        if (controller.signal.aborted) {
+          updateMaterial(course.id, material.id, current => ({ ...current,
+            processingStatus: current.chunks?.length ? 'ready' : 'queued',
+            analysisStatus: current.chunks?.length ? 'partial' : 'not_started',
+            processingStage: undefined, analysisProgress: undefined,
+          }))
+          return
+        }
+        updateMaterial(course.id, material.id, current => {
+          const hasContext = Boolean(current.chunks?.length)
+          return { ...current, processingStatus: hasContext ? 'ready' : 'failed',
+            analysisStatus: hasContext ? 'partial' : 'failed',
+            topics: hasContext && !current.topics?.length ? topicsForMaterial(current, current.chunks ?? []) : current.topics,
+            processingStage: undefined, analysisProgress: undefined }
+        })
         setSyncError(error instanceof Error && /^(Este PDF supera|No encontré texto seleccionable)/.test(error.message)
           ? error.message : 'No pudimos leer este PDF. Comprueba que el archivo sea válido y vuelve a intentarlo.')
+      } finally {
+        if (pdfJobsRef.current.get(material.id) === controller) pdfJobsRef.current.delete(material.id)
       }
     })()
   }
 
-  const retryPdfMaterial = async (course: Course, material: Material) => {
+  const retryPdfMaterial = async (course: Course, material: Material, pages?: number[]) => {
     let file = pdfFiles[material.id]
     if (!file && material.storagePath) {
       try {
@@ -504,7 +728,31 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
         return
       }
     }
-    if (file) processPdfMaterial(course, material, file)
+    if (file) processPdfMaterial(course, material, file, pages)
+  }
+
+  const analyzeMorePdfPages = (course: Course, material: Material) => {
+    if (!material.pageCount) return
+    const analyzed = new Set(material.analyzedPages ?? [])
+    const next = Array.from({ length: material.pageCount }, (_, index) => index + 1)
+      .filter(page => !analyzed.has(page)).slice(0, INITIAL_PDF_PAGE_BUDGET)
+    if (next.length) void retryPdfMaterial(course, material, next)
+  }
+
+  const saveVisualAnalysis = (course: Course, material: Material, pages: number[], text: string) => {
+    const chunk = { id: crypto.randomUUID(), materialId: material.id, pageStart: pages[0], pageEnd: pages[pages.length - 1], text: text.slice(0, 9000), keywords: [] }
+    const chunks = [...(material.chunks ?? []), chunk]
+    const next = withMinimumSummary({ ...material, text: `${material.text}\n\n${chunk.text}`.trim().slice(0, 30000),
+      chunks, topics: [...(material.topics ?? []), ...topicsForMaterial(material, [chunk])],
+      processingStatus: 'ready', analysisStatus: 'partial' })
+    updateMaterial(course.id, material.id, () => next)
+    if (remoteEnabled) void (async () => {
+      try {
+        await saveCourses(user.id, [{ ...course, materials: [next] }])
+        await saveMaterialContext(user.id, course.id, next)
+        for (const artifact of next.artifacts ?? []) if (artifact.type === 'summary') await saveArtifact(user.id, course.id, artifact)
+      } catch { setSyncError('El análisis visual está disponible aquí, pero no pudimos sincronizarlo con tu cuenta.') }
+    })()
   }
 
   const importFile = async (file?: File) => {
@@ -516,7 +764,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
       const material: Material = {
         id: `mat-${uid()}`, title: file.name.replace(/\.pdf$/i, ''), text: '',
         createdAt: new Date().toISOString(), sourceType: 'pdf', sourceName: file.name,
-        processingStatus: 'queued', processingStage: 'reading',
+        processingStatus: 'queued', processingStage: 'reading', analysisStatus: 'not_started', documentKind: 'unknown',
       }
       setPdfFiles(current => ({ ...current, [material.id]: file }))
       setCourses(current => current.map(item => item.id === course.id ? { ...item, materials: [...item.materials, material] } : item))
@@ -600,12 +848,32 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     })()
   }
 
+  const saveExamArtifact = (count: 10 | 20 | 40, items: ExamItem[], force = false) => {
+    if (!activeCourse || !activeMaterial || !items.length) return
+    const course = activeCourse
+    const material = activeMaterial
+    const previous = material.artifacts?.filter(item => item.type === 'exam').sort((a, b) => b.version - a.version)[0]
+    if (!force && material.artifacts?.some(item => item.type === 'exam' && item.status === 'ready' &&
+      typeof item.payload === 'object' && item.payload !== null && 'count' in item.payload && item.payload.count === count)) return
+    const now = new Date().toISOString()
+    const artifact: StudyArtifact = { id: crypto.randomUUID(), type: 'exam', status: 'ready',
+      createdAt: now, updatedAt: now, sourceMaterialId: material.id, version: (previous?.version ?? 0) + 1,
+      payload: { count, items } }
+    updateMaterial(course.id, material.id, current => ({ ...current, artifacts: [...(current.artifacts ?? []), artifact] }))
+    if (remoteEnabled) void (async () => {
+      try {
+        await saveCourses(user.id, [{ ...course, materials: [material] }])
+        await saveArtifact(user.id, course.id, artifact)
+      } catch { setSyncError('El simulacro está disponible aquí, pero no pudimos sincronizarlo con tu cuenta.') }
+    })()
+  }
+
   const topTitle = route.materialId ? 'Estudiar' : route.courseId ? 'Curso' : tabTitle(tab)
 
   if (!workspaces.ready || !learningReady) return <div className="app-loading workspace-loading"><BrandLogo iconOnly/><strong>{!learningReady ? 'Preparando tu espacio de aprendizaje…' : workspaces.loading ? 'Cargando tus espacios…' : 'No pudimos cargar tus espacios'}</strong>{workspaces.error && learningReady && <><p>{workspaces.error}</p><button className="primary" onClick={() => workspaces.refresh()}>Reintentar</button></>}</div>
 
   return (
-    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''}`}>
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''} ${showWorkspaceDrawer ? 'workspace-drawer-open' : ''} ${showCourseForm || showMaterialForm ? 'dialog-open' : ''} ${route.workspace || route.materialStudyMode ? 'intensive-study' : ''}`}>
       <a href="#main-content" className="skip-link">Saltar al contenido</a>
       {mobileSidebarOpen && <button className="mobile-sidebar-backdrop" aria-label="Cerrar navegación" onClick={() => { setMobileSidebarOpen(false); mobileMenuRef.current?.focus() }}/>}
       <aside ref={sidebarRef} className="sidebar" role={mobileSidebarOpen ? 'dialog' : undefined} aria-modal={mobileSidebarOpen || undefined} aria-label="Barra lateral principal">
@@ -651,8 +919,9 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
             <nav className="course-context-nav" aria-label={`Secciones de ${activeCourse.name}`}>{([
               ['overview', 'Resumen'], ['materials', 'Materiales'], ['ai', 'Nexo IA'], ['library', 'Biblioteca'], ['practice', 'Práctica'], ['progress', 'Progreso'],
             ] as [CourseSection, string][]).map(([section, label]) => <button key={section} className={(route.courseSection ?? 'overview') === section ? 'active' : ''} aria-current={(route.courseSection ?? 'overview') === section ? 'page' : undefined} onClick={() => navigate(courseSectionPath(activeCourse.id, section))}>{label}</button>)}</nav>
-            {(route.courseSection === undefined || route.courseSection === 'overview') && <div className="course-overview"><div className="course-overview-main"><p className="eyebrow">Continuar estudiando</p><h3>{activeCourse.materials.length ? activeCourse.materials[activeCourse.materials.length - 1].title : 'Tu primer material'}</h3><p>{activeCourse.materials.length ? 'Retoma el documento y decide cómo avanzar con Nexo.' : 'Agrega un PDF o tus apuntes para empezar.'}</p><button className="primary" onClick={() => activeCourse.materials.length ? openMaterial(activeCourse.id, activeCourse.materials[activeCourse.materials.length - 1].id) : setShowMaterialForm(true)}>{activeCourse.materials.length ? 'Continuar →' : 'Agregar material'}</button></div><div className="course-overview-side"><strong>{workspaceProgress([activeCourse], activity).percent}% de actividad</strong><p>Dominio estimado: {masterySummary(memory, activeCourse.materials.map(item => item.id)).percent}% · {masterySummary(memory, activeCourse.materials.map(item => item.id)).weak.length} conceptos por repasar</p><div className="course-overview-actions"><button className="secondary" onClick={() => navigate(courseSectionPath(activeCourse.id, 'practice'))}>Preparar sesión →</button><button className="text-button" onClick={() => navigate(courseSectionPath(activeCourse.id, 'ai'))}>Preguntar a Nexo →</button></div></div></div>}
-            {(route.courseSection === undefined || route.courseSection === 'overview' || route.courseSection === 'materials') && (activeCourse.materials.length ? <div className="materials-grid course-materials-grid">{activeCourse.materials.map(material => <button className="material-card" key={material.id} onClick={() => openMaterial(activeCourse.id, material.id)}><div className="material-meta"><span className="file-icon">{material.sourceType === 'pdf' ? 'PDF' : '≡'}</span>{material.pages?.length ? <span className="source-badge">{material.pages.length} págs.</span> : null}{material.studyPackMeta?.source === 'nexo-ai' && <span className="ai-ready-badge">✦ IA lista</span>}</div><strong>{material.title}</strong><p>{material.processingStatus === 'processing' ? 'Nexo está leyendo este documento…' : material.text.replace(/\[Página \d+\]/g, '').slice(0, 125)}{material.text.length > 125 ? '…' : ''}</p><small>Estudiar material →</small></button>)}</div> : <EmptyState title="Todavía no hay materiales" text="Sube un PDF para abrirlo junto a Nexo y elegir cómo estudiar." action="Agregar material" onClick={() => setShowMaterialForm(true)} />)}
+            {(route.courseSection === undefined || route.courseSection === 'overview') && <div className="course-overview"><div className="course-overview-main"><p className="eyebrow">Continuar estudiando</p><h3>{activeCourse.materials.length ? displayMaterialTitle(activeCourse.materials[activeCourse.materials.length - 1].title) : 'Tu primer material'}</h3><p>{activeCourse.materials.length ? 'Retoma el documento y decide cómo avanzar con Nexo.' : 'Agrega un PDF o tus apuntes para empezar.'}</p><button className="primary" onClick={() => activeCourse.materials.length ? openMaterial(activeCourse.id, activeCourse.materials[activeCourse.materials.length - 1].id) : setShowMaterialForm(true)}>{activeCourse.materials.length ? 'Continuar →' : 'Agregar material'}</button></div><div className="course-overview-side"><strong>{workspaceProgress([activeCourse], activity).percent}% de actividad</strong><p>Dominio estimado: {masterySummary(memory, activeCourse.materials.map(item => item.id)).percent}% · {masterySummary(memory, activeCourse.materials.map(item => item.id)).weak.length} conceptos por repasar</p><div className="course-overview-actions"><button className="secondary" onClick={() => navigate(courseSectionPath(activeCourse.id, 'practice'))}>Preparar sesión →</button><button className="text-button" onClick={() => navigate(courseSectionPath(activeCourse.id, 'ai'))}>Preguntar a Nexo →</button></div></div></div>}
+            {(route.courseSection === undefined || route.courseSection === 'overview') && weakConcepts.length > 0 && <div className="course-weak-topics"><p className="eyebrow">Temas por reforzar</p><div>{weakConcepts.map(concept => <button className="secondary" key={concept.key} onClick={() => openMaterial(activeCourse.id, concept.materialId)}>{concept.label} →</button>)}</div></div>}
+            {(route.courseSection === undefined || route.courseSection === 'overview' || route.courseSection === 'materials') && (activeCourse.materials.length ? <div className="materials-grid course-materials-grid">{activeCourse.materials.map(material => <button className="material-card" key={material.id} onClick={() => openMaterial(activeCourse.id, material.id)}><div className="material-meta"><span className="file-icon">{material.sourceType === 'pdf' ? 'PDF' : '≡'}</span>{material.pageCount ? <span className="source-badge">{material.pageCount} págs.</span> : null}{material.studyPackMeta?.source === 'nexo-ai' && <span className="ai-ready-badge">✦ IA lista</span>}</div><strong>{displayMaterialTitle(material.title)}</strong><p>{material.analysisStatus === 'reading' ? 'Nexo está leyendo este documento…' : material.text.replace(/\[Página \d+\]/g, '').slice(0, 125)}{material.text.length > 125 ? '…' : ''}</p><small>Estudiar material →</small></button>)}</div> : <EmptyState title="Todavía no hay materiales" text="Sube un PDF para abrirlo junto a Nexo y elegir cómo estudiar." action="Agregar material" onClick={() => setShowMaterialForm(true)} />)}
             {route.courseSection === 'ai' && <CourseAiPage key={activeCourse.id} course={activeCourse} memory={memory} activity={activity} onOpenSource={(materialId, page) => { openMaterial(activeCourse.id, materialId); setSourceJump({ materialId, page }) }}/>}
             {route.courseSection === 'library' && <div className="course-artifact-library"><div className="section-head"><div><p className="eyebrow">Creado con tus materiales</p><h3>Biblioteca generada</h3></div></div>{activeCourse.materials.map(material => {
               const readyArtifacts = (material.artifacts ?? []).filter(item => item.status === 'ready')
@@ -661,7 +930,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
               const artifactModes: Partial<Record<StudyArtifactType, MaterialStudyMode>> = { flashcards: 'flashcards', multiple_choice: 'multiple-choice', written_questions: 'written', fill_blanks: 'fill-blanks', notes: 'notes', exam: 'exam' }
               return <section className="course-artifact-group" key={material.id}><div><h4>{material.title}</h4><p>{readyArtifacts.length ? `${readyArtifacts.length} recursos listos` : 'Prepara recursos desde este material cuando los necesites.'}</p></div><div className="course-artifact-links">{readyArtifacts.map(artifact => <button key={artifact.id} className="secondary" onClick={() => { const mode = artifactModes[artifact.type]; navigate(mode ? materialStudyPath(activeCourse.id, material.id, mode) : materialPath(activeCourse.id, material.id)) }}>{artifactLabels[artifact.type]} →</button>)}<button className="text-button" onClick={() => openMaterial(activeCourse.id, material.id)}>{readyArtifacts.length ? 'Abrir material' : 'Abrir y preparar →'}</button></div></section>
             })}{!activeCourse.materials.length && <div className="course-section-empty"><p>Agrega un material para preparar tus primeros recursos.</p><button className="primary" onClick={() => setShowMaterialForm(true)}>Agregar material</button></div>}</div>}
-            {route.courseSection === 'practice' && <CoursePracticePage course={activeCourse} sessions={sessions.filter(session => session.courseId === activeCourse.id)} onPrepare={(minutes, objective) => prepareSession(activeCourse, minutes, objective)} onComplete={completePracticeStep} onOpenActivity={(materialId, mode) => navigate(materialStudyPath(activeCourse.id, materialId, mode))}/>}
+            {route.courseSection === 'practice' && <CoursePracticePage course={activeCourse} sessions={sessions.filter(session => session.courseId === activeCourse.id)} onPrepare={(minutes, objective) => prepareSession(activeCourse, minutes, objective)} onComplete={completePracticeStep} onOpenActivity={openPracticeActivity}/>}
             {route.courseSection === 'progress' && <ProgressPage workspace={{ id: activeCourse.id, name: activeCourse.name, emoji: activeCourse.emoji, created_at: '' }} courses={[activeCourse]} activity={activity} memory={memory} sessions={sessions.filter(session => session.courseId === activeCourse.id)} onOpenMaterial={openMaterial} />}
           </> : <EmptyState title="Curso no encontrado" text="Este curso no existe en este dispositivo." action="Volver a cursos" onClick={() => navigate('/courses')} />}
         </section>}
@@ -669,9 +938,9 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
         {tab === 'resolver' && <ResolverPage key={workspaces.selectedId} workspaceId={workspaces.selectedId} feedback={<FeedbackWidget context={pathname} inline />} />}
         {tab === 'corrector' && <CorrectorPage key={workspaces.selectedId} />}
 
-        {tab === 'cursos' && route.workspace && activeCourse && activeMaterial && <MaterialWorkspace key={activeMaterial.id} course={activeCourse} material={activeMaterial} localPdf={pdfFiles[activeMaterial.id]} initialPage={sourceJump?.materialId === activeMaterial.id ? sourceJump.page : undefined} onBack={() => navigate(coursePath(activeCourse.id))} onStudy={mode => navigate(materialStudyPath(activeCourse.id, activeMaterial.id, mode))} onRetry={pdfFiles[activeMaterial.id] || activeMaterial.storagePath ? () => void retryPdfMaterial(activeCourse, activeMaterial) : undefined}/>}
+        {tab === 'cursos' && route.workspace && activeCourse && activeMaterial && <MaterialWorkspace key={activeMaterial.id} course={activeCourse} material={activeMaterial} localPdf={pdfFiles[activeMaterial.id]} initialPage={sourceJump?.materialId === activeMaterial.id ? sourceJump.page : undefined} onBack={() => navigate(coursePath(activeCourse.id))} onStudy={mode => navigate(materialStudyPath(activeCourse.id, activeMaterial.id, mode))} onRetry={pdfFiles[activeMaterial.id] || activeMaterial.storagePath ? () => void retryPdfMaterial(activeCourse, activeMaterial) : undefined} onAnalyzeMore={() => analyzeMorePdfPages(activeCourse, activeMaterial)} onVisualAnalysis={(pages, text) => saveVisualAnalysis(activeCourse, activeMaterial, pages, text)}/>}
 
-        {tab === 'cursos' && route.materialStudyMode && !['flashcards', 'multiple-choice'].includes(route.materialStudyMode) && activeCourse && activeMaterial && <StudyMethodPage key={`${activeMaterial.id}:${route.materialStudyMode}`} course={activeCourse} material={activeMaterial} mode={route.materialStudyMode} onBack={() => navigate(activeMaterial.sourceType === 'pdf' ? materialWorkspacePath(activeCourse.id, activeMaterial.id) : materialPath(activeCourse.id, activeMaterial.id))} onGenerate={generateArtifact} onRecall={(concept, rating) => recordRecall(activeMaterial.id, concept, rating)} onPractice={(type, index, correct) => recordActivity(activeMaterial.id, value => ({ ...value, practiceAttempts: { ...value.practiceAttempts, [`${type}:${index}`]: correct } }))}/>}
+        {tab === 'cursos' && route.materialStudyMode && !['flashcards', 'multiple-choice'].includes(route.materialStudyMode) && activeCourse && activeMaterial && <StudyMethodPage key={`${activeMaterial.id}:${route.materialStudyMode}`} course={activeCourse} material={activeMaterial} mode={route.materialStudyMode} onBack={() => navigate(activeMaterial.sourceType === 'pdf' ? materialWorkspacePath(activeCourse.id, activeMaterial.id) : materialPath(activeCourse.id, activeMaterial.id))} onGenerate={generateArtifact} onSaveExam={saveExamArtifact} onRecall={(concept, rating) => recordRecall(activeMaterial.id, concept, rating)} onPractice={(type, index, correct) => recordMethodPractice(activeMaterial.id, type, index, correct)}/>}
 
         {tab === 'cursos' && route.materialId && !route.workspace && (!route.materialStudyMode || ['flashcards', 'multiple-choice'].includes(route.materialStudyMode)) && <section className="course-study-page"><div className="course-study-context"><div><p className="eyebrow">Dentro de {activeCourse?.name ?? 'tu curso'}</p><h2>Estudia este material</h2></div><button className="secondary" onClick={() => activeCourse && navigate(activeMaterial?.sourceType === 'pdf' ? materialWorkspacePath(activeCourse.id, activeMaterial.id) : coursePath(activeCourse.id))}>{activeMaterial?.sourceType === 'pdf' ? '← Volver al PDF' : '← Ver todos los materiales'}</button></div><div className="study-layout">
           <aside className="panel material-nav"><div className="section-head compact"><div><p className="eyebrow">Material</p><h3>{activeCourse?.name ?? 'Curso'}</h3></div></div>{activeCourse?.materials.map(material => <button key={material.id} className={`material-nav-item ${activeMaterial?.id === material.id ? 'active' : ''}`} onClick={() => openMaterial(activeCourse.id, material.id)}><span>{material.sourceType === 'pdf' ? 'P' : '≡'}</span><div><strong>{material.title}</strong><small>{material.studyPackMeta?.source === 'nexo-ai' ? '✦ Preparado por Nexo IA' : material.pages?.length ? `${material.pages.length} páginas` : `${material.text.length} caracteres`}</small></div></button>)}<button className="secondary full" onClick={() => setShowMaterialForm(true)}>+ Agregar material</button></aside>
@@ -680,8 +949,8 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
             {aiGeneratingMaterialId === activeMaterial.id && <StudyGenerationBanner material={activeMaterial} />}
             {aiGenerationErrors[activeMaterial.id] && <div className="study-ai-error"><div><strong>No pude completar la preparación con IA.</strong><p>{aiGenerationErrors[activeMaterial.id]} Puedes seguir estudiando con el paquete local o intentarlo otra vez.</p></div><button className="secondary" onClick={regenerateActiveMaterial}>Reintentar</button></div>}
             {studyMode === 'summary' && <SummaryView pack={pack} material={activeMaterial} />}
-            {studyMode === 'flashcards' && (activeMaterial.sourceType === 'pdf' && flashArtifact?.status !== 'ready' ? <ArtifactGate name="flashcards" status={flashArtifact?.status} onGenerate={() => generateArtifact('flashcards')} /> : <FlashcardView pack={pack} index={flashIndex} revealed={flashRevealed} setIndex={setFlashIndex} setRevealed={setFlashRevealed} onReveal={index => recordActivity(activeMaterial.id, value => ({ ...value, flashcardsSeen: [...new Set([...(value.flashcardsSeen ?? []), index])] }))} onRate={(index, rating) => recordRecall(activeMaterial.id, pack.flashcards[index].concept || pack.flashcards[index].front, rating)} />)}
-            {studyMode === 'quiz' && (activeMaterial.sourceType === 'pdf' && quizArtifact?.status !== 'ready' ? <ArtifactGate name="preguntas de opción múltiple" status={quizArtifact?.status} onGenerate={() => generateArtifact('multiple_choice')} /> : <QuizView pack={pack} answers={quizAnswers} setAnswers={setQuizAnswers} onAnswer={(index, correct) => { recordActivity(activeMaterial.id, value => ({ ...value, answers: { ...value.answers, [`quiz:${index}`]: correct } })); recordRecall(activeMaterial.id, pack.quiz[index].concept || pack.quiz[index].question, correct ? 'good' : 'again') }} />)}
+            {studyMode === 'flashcards' && (activeMaterial.sourceType === 'pdf' && flashArtifact?.status !== 'ready' ? <ArtifactGate name="flashcards" status={flashArtifact?.status} onGenerate={() => generateArtifact('flashcards')} /> : <FlashcardView pack={pack} index={flashIndex} revealed={flashRevealed} setIndex={setFlashIndex} setRevealed={setFlashRevealed} onReveal={index => recordActivity(activeMaterial.id, value => ({ ...value, flashcardsSeen: [...new Set([...(value.flashcardsSeen ?? []), index])] }))} onRate={(index, rating) => recordFlashcardRating(activeMaterial.id, pack.flashcards[index].concept || pack.flashcards[index].front, rating)} />)}
+            {studyMode === 'quiz' && (activeMaterial.sourceType === 'pdf' && quizArtifact?.status !== 'ready' ? <ArtifactGate name="preguntas de opción múltiple" status={quizArtifact?.status} onGenerate={() => generateArtifact('multiple_choice')} /> : <QuizView pack={pack} answers={quizAnswers} setAnswers={setQuizAnswers} onAnswer={(index, correct) => recordQuizAnswer(activeMaterial.id, pack.quiz[index].concept || pack.quiz[index].question, index, correct)} />)}
             {studyMode === 'tutor' && <TutorView key={activeMaterial.id} material={activeMaterial} />}
           </> : <EmptyState title="No hay material seleccionado" text="Entra a un curso y agrega un PDF para crear una sesión de estudio." action="Ver cursos" onClick={() => navigate('/courses')} />}</div>
         </div></section>}
@@ -700,7 +969,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
 
       {showCourseForm && <Modal title={`Nuevo curso · ${workspaces.selectedWorkspace.name}`} onClose={() => setShowCourseForm(false)}><div className="course-emoji-preview"><span>{courseEmoji}</span><div><strong>Un curso para {workspaces.selectedWorkspace.name}</strong><small>Quedará dentro de este espacio y su avance se medirá aquí.</small></div></div><div className="course-emoji-picker">{['📘','🧠','🧪','🩺','🦷','📐','⚛️','💻','📚','🌎','⚖️','💹','🧬','🔬','🎨','🎯'].map(emoji => <button key={emoji} className={courseEmoji === emoji ? 'active' : ''} onClick={() => setCourseEmoji(emoji)}>{emoji}</button>)}</div><label>Nombre del curso<input autoFocus value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Ej. Histología" onKeyDown={e => e.key === 'Enter' && addCourse()} /></label>{courseError && <div role="alert" className="auth-alert error">{courseError}</div>}<div className="modal-actions"><button className="secondary" onClick={() => setShowCourseForm(false)}>Cancelar</button><button className="primary" disabled={courseBusy || !courseName.trim()} onClick={addCourse}>{courseBusy ? 'Creando…' : 'Crear curso'}</button></div></Modal>}
 
-      {showMaterialForm && <Modal title={`Agregar material${activeCourse ? ` · ${activeCourse.name}` : ''}`} onClose={() => { setShowMaterialForm(false); resetMaterialForm() }} wide>{!activeCourse ? <p>Primero crea un curso.</p> : <><div className="upload-box"><input id="file-upload" type="file" accept=".txt,.md,.pdf" onChange={e => importFile(e.target.files?.[0])}/><label htmlFor="file-upload"><span>↑</span><strong>Subir PDF, TXT o MD</strong><small>Un PDF abre su espacio de inmediato. Nexo lo lee en segundo plano; límite de 25 MB y 250 páginas.</small></label></div>{importStatus && <div className={`import-status ${importStatus.startsWith('⚠') ? 'error' : ''}`}>{importStatus}</div>}<label>Título<input value={materialTitle} onChange={e => setMaterialTitle(e.target.value)} placeholder="Ej. Clase 04 — Patología oral" /></label><label>Texto extraído / apuntes<textarea rows={7} value={materialText} onChange={e => { setMaterialText(e.target.value); if (!sourceName) setSourceType('text') }} placeholder="También puedes pegar aquí tus apuntes directamente…" /></label><div className="modal-actions"><button className="secondary" onClick={() => { setShowMaterialForm(false); resetMaterialForm() }}>Cancelar</button><button className="primary" disabled={!materialTitle.trim() || !materialText.trim()} onClick={addMaterial}>Guardar y estudiar</button></div></>}</Modal>}
+      {showMaterialForm && <Modal title={`Agregar material${activeCourse ? ` · ${activeCourse.name}` : ''}`} onClose={() => { setShowMaterialForm(false); resetMaterialForm() }} wide>{!activeCourse ? <p>Primero crea un curso.</p> : <><div className="upload-box"><input id="file-upload" type="file" accept=".txt,.md,.pdf" onChange={e => importFile(e.target.files?.[0])}/><label htmlFor="file-upload"><span>↑</span><strong>Subir PDF, TXT o MD</strong><small>Un PDF abre su espacio de inmediato. Nexo analiza páginas por lotes; límite de 25 MB por archivo.</small></label></div>{importStatus && <div className={`import-status ${importStatus.startsWith('⚠') ? 'error' : ''}`}>{importStatus}</div>}<label>Título<input value={materialTitle} onChange={e => setMaterialTitle(e.target.value)} placeholder="Ej. Clase 04 — Patología oral" /></label><label>Texto extraído / apuntes<textarea rows={7} value={materialText} onChange={e => { setMaterialText(e.target.value); if (!sourceName) setSourceType('text') }} placeholder="También puedes pegar aquí tus apuntes directamente…" /></label><div className="modal-actions"><button className="secondary" onClick={() => { setShowMaterialForm(false); resetMaterialForm() }}>Cancelar</button><button className="primary" disabled={!materialTitle.trim() || !materialText.trim()} onClick={addMaterial}>Guardar y estudiar</button></div></>}</Modal>}
       {tab !== 'resolver' && <FeedbackWidget context={pathname} />}
     </div>
   )

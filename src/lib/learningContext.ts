@@ -57,7 +57,7 @@ export type RetrievedChunk = MaterialChunk & { materialTitle: string; score: num
 
 export function retrieveCourseChunks(question: string, materials: Material[], limit = 5): RetrievedChunk[] {
   const query = [...new Set(terms(question))]
-  const candidates = materials.flatMap(material => (material.chunks?.length ? material.chunks : chunksForMaterial(material))
+  const candidates = materials.flatMap(material => (material.chunks?.length ? material.chunks : material.text.length <= 15000 && material.text ? chunksForMaterial(material) : [])
     .map(chunk => {
       const chunkTerms = terms(chunk.text)
       const counts = new Map<string, number>()

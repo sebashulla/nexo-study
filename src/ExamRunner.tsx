@@ -7,7 +7,7 @@ import { ResponseRenderer } from './ResponseRenderer'
 
 type Written = { question: string; keyPoints: string[]; sourcePage?: number; concept?: string }
 type Blank = { sentence: string; answer: string; sourcePage?: number; concept?: string }
-type ExamItem = { kind: 'multiple_choice'; value: QuizQuestion } | { kind: 'written_questions'; value: Written } | { kind: 'fill_blanks'; value: Blank }
+export type ExamItem = { kind: 'multiple_choice'; value: QuizQuestion } | { kind: 'written_questions'; value: Written } | { kind: 'fill_blanks'; value: Blank }
 
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
@@ -42,10 +42,35 @@ function examPool(material: Material): ExamItem[] {
   return mixed
 }
 
-export function ExamRunner({ course, material, onGenerate, onRecall, onPractice }: {
+function storedExam(payload: unknown): { count: 10 | 20 | 40; items: ExamItem[] } | null {
+  const data = record(payload)
+  if (data?.count !== 10 && data?.count !== 20 && data?.count !== 40) return null
+  if (!Array.isArray(data.items)) return null
+  const items: ExamItem[] = (data.items as unknown[]).flatMap((item): ExamItem[] => {
+    const row = record(item)
+    const value = record(row?.value)
+    if (!row || !value) return []
+    if (row.kind === 'multiple_choice') {
+      const question = artifactQuestions({ questions: [value] })[0]
+      return question ? [{ kind: 'multiple_choice' as const, value: question }] : []
+    }
+    if (row.kind === 'written_questions' && string(value.question) && Array.isArray(value.keyPoints))
+      return [{ kind: 'written_questions' as const, value: { question: string(value.question),
+        keyPoints: value.keyPoints.filter((point): point is string => typeof point === 'string'),
+        sourcePage: sourcePage(value.sourcePage), concept: string(value.concept) } }]
+    if (row.kind === 'fill_blanks' && string(value.sentence) && string(value.answer))
+      return [{ kind: 'fill_blanks' as const, value: { sentence: string(value.sentence), answer: string(value.answer),
+        sourcePage: sourcePage(value.sourcePage), concept: string(value.concept) } }]
+    return []
+  })
+  return items.length ? { count: data.count, items } : null
+}
+
+export function ExamRunner({ course, material, onGenerate, onSaveExam, onRecall, onPractice }: {
   course: Course
   material: Material
   onGenerate: (type: Exclude<StudyArtifactType, 'summary' | 'exam'>, force?: boolean) => void
+  onSaveExam: (count: 10 | 20 | 40, items: ExamItem[], force?: boolean) => void
   onRecall: (concept: string, rating: RecallRating) => void
   onPractice: (type: 'written_questions' | 'fill_blanks' | 'exam', index: number, correct: boolean) => void
 }) {
@@ -56,7 +81,10 @@ export function ExamRunner({ course, material, onGenerate, onRecall, onPractice 
   const [feedback, setFeedback] = useState('')
   const [busy, setBusy] = useState(false)
   const [correct, setCorrect] = useState(0)
-  const items = examPool(material).slice(0, count)
+  const available = examPool(material).slice(0, count)
+  const saved = material.artifacts?.filter(artifact => artifact.type === 'exam' && artifact.status === 'ready')
+    .sort((a, b) => b.version - a.version).map(artifact => storedExam(artifact.payload)).find(value => value?.count === count)
+  const items = saved?.items ?? []
   const current = items[index]
   const reset = () => { setIndex(0); setAnswer(''); setChecked(false); setFeedback(''); setCorrect(0) }
   const next = () => { setIndex(value => value + 1); setAnswer(''); setChecked(false); setFeedback('') }
@@ -88,7 +116,8 @@ export function ExamRunner({ course, material, onGenerate, onRecall, onPractice 
       const processing = material.artifacts?.some(item => item.type === type && item.status === 'processing')
       return <button className="secondary" key={type} disabled={processing} onClick={() => onGenerate(type)}>{processing ? `Preparando ${labels[type]}…` : `Preparar ${labels[type]}`}</button>
     })}</div>}
-    {!items.length ? <div className="artifact-gate"><h3>Prepara preguntas para el simulacro</h3><p>Nexo creará ejercicios bajo demanda y los conservará en tu biblioteca.</p></div>
+    {saved && <button className="secondary" onClick={() => { onSaveExam(count, available, true); reset() }} disabled={!available.length}>Regenerar simulacro</button>}
+    {!items.length ? <div className="artifact-gate"><h3>Prepara preguntas para el simulacro</h3><p>{available.length ? `${available.length} preguntas disponibles. El simulacro quedará guardado para reutilizarlo.` : 'Nexo creará ejercicios bajo demanda y los conservará en tu biblioteca.'}</p>{available.length > 0 && <button className="primary" onClick={() => { onSaveExam(count, available); reset() }}>Preparar simulacro</button>}</div>
       : index >= items.length ? <div className="guided-lesson"><h3>Simulacro terminado</h3><p>{correct} de {items.length} respuestas marcadas como comprendidas o correctas.</p><p>Las respuestas abiertas se valoran según tu autoevaluación después de la orientación de Nexo.</p><button className="primary" onClick={reset}>Repetir simulacro</button></div>
         : <div className="guided-lesson"><p className="counter">Pregunta {index + 1} de {items.length}{items.length < count ? ` · ${items.length} disponibles` : ''}{current.value.sourcePage ? ` · Página ${current.value.sourcePage}` : ''}</p>
           <h3>{current.kind === 'fill_blanks' ? current.value.sentence : current.value.question}</h3>

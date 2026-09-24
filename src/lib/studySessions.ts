@@ -1,4 +1,4 @@
-import type { Course, StudySession } from '../types'
+import type { Course, StudySession, StudySessionEvent } from '../types'
 import type { StudyActivity } from './studyProgress'
 import { masterySummary, type LearningMemory } from './learningState'
 
@@ -34,6 +34,10 @@ export function completeSessionStep(session: StudySession, step: number): StudyS
   return { ...session, results, status: completed ? 'completed' : 'active', completedAt: completed ? new Date().toISOString() : undefined }
 }
 
+export function activateStudySession(session: StudySession): StudySession {
+  return session.status === 'planned' ? { ...session, status: 'active' } : session
+}
+
 export function loadLocalSessions(userId: string): StudySession[] {
   try {
     const value: unknown = JSON.parse(localStorage.getItem(`nexo-sessions-v1:${userId}`) || '[]')
@@ -43,4 +47,15 @@ export function loadLocalSessions(userId: string): StudySession[] {
 
 export function saveLocalSessions(userId: string, sessions: StudySession[]) {
   localStorage.setItem(`nexo-sessions-v1:${userId}`, JSON.stringify(sessions))
+}
+
+export function loadLocalSessionEvents(userId: string): StudySessionEvent[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(`nexo-session-events-v1:${userId}`) || '[]')
+    return Array.isArray(value) ? value.filter(item => item && typeof item.id === 'string' && typeof item.sessionId === 'string') : []
+  } catch { return [] }
+}
+
+export function saveLocalSessionEvents(userId: string, events: StudySessionEvent[]) {
+  localStorage.setItem(`nexo-session-events-v1:${userId}`, JSON.stringify(events))
 }

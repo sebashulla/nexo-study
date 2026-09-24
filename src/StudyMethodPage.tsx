@@ -3,7 +3,7 @@ import type { Course, Material, StudyArtifactType } from './types'
 import type { MaterialStudyMode } from './lib/router'
 import type { RecallRating } from './lib/learningState'
 import { callAI } from './lib/aiClient'
-import { ExamRunner } from './ExamRunner'
+import { ExamRunner, type ExamItem } from './ExamRunner'
 import { chunksForMaterial, topicsForMaterial } from './lib/learningContext'
 import { ResponseRenderer } from './ResponseRenderer'
 
@@ -30,12 +30,13 @@ function blanksFrom(payload: unknown): BlankItem[] {
 }
 function normalized(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ') }
 
-export function StudyMethodPage({ course, material, mode, onBack, onGenerate, onRecall, onPractice }: {
+export function StudyMethodPage({ course, material, mode, onBack, onGenerate, onSaveExam, onRecall, onPractice }: {
   course: Course
   material: Material
   mode: MaterialStudyMode
   onBack: () => void
   onGenerate: (type: Exclude<StudyArtifactType, 'summary' | 'exam'>, force?: boolean) => void
+  onSaveExam: (count: 10 | 20 | 40, items: ExamItem[], force?: boolean) => void
   onRecall: (concept: string, rating: RecallRating) => void
   onPractice: (type: 'written_questions' | 'fill_blanks' | 'exam', index: number, correct: boolean) => void
 }) {
@@ -48,7 +49,7 @@ export function StudyMethodPage({ course, material, mode, onBack, onGenerate, on
   const artifact = material.artifacts?.filter(item => item.type === artifactType).sort((a, b) => b.version - a.version)[0]
   const questions = writtenFrom(artifact?.payload)
   const blanks = blanksFrom(artifact?.payload)
-  const topics = material.topics?.length ? material.topics : topicsForMaterial(material, chunksForMaterial(material))
+  const topics = material.topics?.length ? material.topics : material.chunks?.length ? topicsForMaterial(material, material.chunks) : material.text.length <= 15000 ? topicsForMaterial(material, chunksForMaterial(material)) : []
   const notes = object(artifact?.payload)
 
   const next = (length: number) => { setIndex(current => (current + 1) % length); setAnswer(''); setFeedback(''); setChecked(false) }
@@ -85,6 +86,6 @@ export function StudyMethodPage({ course, material, mode, onBack, onGenerate, on
     {mode === 'written' && (artifact?.status !== 'ready' ? gate('preguntas escritas', 'written_questions') : questions.length ? <div className="guided-lesson"><p className="counter">Pregunta {index + 1} de {questions.length}{questions[index].sourcePage ? ` · Página ${questions[index].sourcePage}` : ''}</p><h3>{questions[index].question}</h3><label>Tu respuesta<textarea rows={8} value={answer} onChange={event => setAnswer(event.target.value)} placeholder="Desarrolla tu idea y justifícala con el material…"/></label><button className="primary" disabled={!answer.trim() || busy} onClick={() => void reviewWritten(questions[index])}>{busy ? 'Revisando…' : 'Revisar con Nexo'}</button>{feedback && <div className="guided-feedback"><ResponseRenderer text={feedback}/><div><button className="secondary" onClick={() => { onRecall(questions[index].concept || questions[index].question, 'again'); onPractice('written_questions', index, false); next(questions.length) }}>Necesito repasar</button><button className="primary" onClick={() => { onRecall(questions[index].concept || questions[index].question, 'good'); onPractice('written_questions', index, true); next(questions.length) }}>Siguiente pregunta</button></div></div>}</div> : gate('preguntas escritas', 'written_questions'))}
     {mode === 'fill-blanks' && (artifact?.status !== 'ready' ? gate('ejercicios de completar', 'fill_blanks') : blanks.length ? <div className="guided-lesson"><p className="counter">Ejercicio {index + 1} de {blanks.length}{blanks[index].sourcePage ? ` · Página ${blanks[index].sourcePage}` : ''}</p><h3>{blanks[index].sentence}</h3><label>Completa el espacio<input value={answer} onChange={event => setAnswer(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') setChecked(true) }} /></label><button className="primary" disabled={!answer.trim() || checked} onClick={() => setChecked(true)}>Comprobar</button>{checked && <div className="guided-feedback"><strong>{normalized(answer) === normalized(blanks[index].answer) ? 'Correcto' : 'Revisa esta idea'}</strong><p>Respuesta esperada: {blanks[index].answer}</p><button className="primary" onClick={() => { onRecall(blanks[index].concept || blanks[index].answer, normalized(answer) === normalized(blanks[index].answer) ? 'good' : 'again'); onPractice('fill_blanks', index, normalized(answer) === normalized(blanks[index].answer)); next(blanks.length) }}>Siguiente →</button></div>}</div> : gate('ejercicios de completar', 'fill_blanks'))}
     {mode === 'notes' && (artifact?.status !== 'ready' ? gate('apuntes', 'notes') : notes ? <div className="structured-notes"><section><h3>Resumen</h3><p>{string(notes.summary)}</p></section>{([['essentialConcepts', 'Conceptos esenciales'], ['relationships', 'Relaciones'], ['examples', 'Ejemplos'], ['importantData', 'Datos importantes'], ['selfQuestions', 'Preguntas que deberías poder responder']] as const).map(([key, label]) => <section key={key}><h3>{label}</h3><ul>{Array.isArray(notes[key]) && notes[key].map((item, i) => <li key={i}>{string(item)}</li>)}</ul></section>)}</div> : gate('apuntes', 'notes'))}
-    {mode === 'exam' && <ExamRunner course={course} material={material} onGenerate={onGenerate} onRecall={onRecall} onPractice={onPractice} />}
+    {mode === 'exam' && <ExamRunner course={course} material={material} onGenerate={onGenerate} onSaveExam={onSaveExam} onRecall={onRecall} onPractice={onPractice} />}
   </section>
 }

@@ -1,114 +1,74 @@
-# Nexo Study · Beta V0.8
+# Nexo Study · Beta V0.9.1
 
-V0.8 convierte la zona de estudio en una navegación real por rutas y conecta los PDFs con la generación automática de material mediante Nexo IA.
+Nexo Study organiza cursos, materiales y sesiones alrededor de Nexo IA. El Learning Workspace abre un PDF inmediatamente, mantiene el visor separado de su análisis y permite estudiar o preguntar con referencias a páginas. Resolver, Corrector, feedback, Auth y los espacios de estudio siguen disponibles.
 
-## Novedades principales
+## Learning Workspace
 
-- Rutas separadas para las áreas principales de la app:
-  - `/courses`
-  - `/courses/:courseId`
-  - `/courses/:courseId/materials/:materialId`
-  - `/resolver`
-  - `/corrector`
-  - `/progress`
-- Cada curso tiene su propia página y cada material abre su sesión dentro del curso. Las rutas antiguas `/folders` y `/study` se redirigen a `/courses`; la primera abre el explorador lateral.
-- Al guardar un PDF, Nexo IA genera automáticamente:
-  - resumen de ideas clave,
-  - palabras/conceptos importantes,
-  - hasta 12 flashcards,
-  - hasta 10 preguntas para un quiz de práctica,
-  - referencias de página cuando el texto extraído permite identificarlas.
-- Antes de generar, el estudiante puede indicar el enfoque: equilibrado, comprender, memorizar o examen.
-- También puede indicar nivel: esencial, universitario o avanzado.
-- PDFs largos usan un muestreo distribuido por páginas para no analizar solamente el inicio del documento.
-- Si Nexo IA falla temporalmente, el sistema conserva un paquete local de respaldo para que el estudiante no quede bloqueado.
-- La migración `006_owner_admin.sql` convierte únicamente a `@sebasshulla` en administrador de la beta.
+- Rutas de curso: `/courses/:courseId` y las secciones `/materials`, `/ai`, `/library`, `/practice` y `/progress`.
+- Material: `/courses/:courseId/materials/:materialId/workspace`; métodos: `/study/:mode`.
+- En escritorio, PDF y Nexo comparten un panel ajustable. En móvil se muestran como pestañas Material y Nexo IA.
+- El chat de curso recupera fragmentos relevantes del curso; el chat de material se limita al documento. Las referencias conservan la página física para abrirla en el visor.
+- Flashcards, preguntas, apuntes y simulacros se preparan bajo demanda. Los artefactos listos se guardan y reutilizan; regenerar requiere una acción explícita.
+- Las sesiones de práctica se pueden planificar, activar y completar. Los resultados y eventos académicos mínimos se guardan sin contenido de las respuestas.
 
-## Variables de entorno
+## Motor PDF 2.0
 
-Copia `.env.example` como `.env.local`:
+El archivo se muestra en el visor del navegador mientras PDF.js lee metadatos y texto. `pageCount` proviene de `pdf.numPages`, aunque todas las páginas sean imágenes o falle la extracción. Un total aún desconocido se muestra como “Calculando páginas…”.
 
-```env
-VITE_SUPABASE_URL=https://TU-PROYECTO.supabase.co
-VITE_SUPABASE_ANON_KEY=TU_SUPABASE_ANON_KEY
+La primera pasada procesa hasta 80 páginas en lotes de 10. Un PDF de más páginas queda en estado **partial**, conserva el número físico total y ofrece **Analizar más páginas**. El progreso visible representa páginas realmente inspeccionadas. Salir del material o abrir otro PDF cancela la extracción en curso. El visor sigue utilizable si el análisis falla.
 
-NEXO_AI_API_KEY=TU_CLAVE
-NEXO_AI_STANDARD_MODEL=gemini-3.5-flash-lite
-NEXO_AI_DEEP_MODEL=gemini-3.8-flash
+Nexo distingue documentos con texto, escaneados y mixtos según las páginas inspeccionadas. Un PDF escaneado no se trata como archivo inválido: se puede elegir la página actual o un rango de hasta cuatro páginas y pedir un análisis visual explícito. No hay OCR automático ni envío masivo de imágenes.
+
+Límite actual de archivo: **25 MiB**. El límite anterior de 250 páginas se elimina con la migración 008. Los PDF pueden tener más páginas; su análisis inicial sigue acotado para controlar memoria y costos.
+
+## Persistencia y privacidad
+
+Supabase Auth identifica al estudiante. `007_learning_workspace.sql` crea cursos, materiales, fragmentos, temas, artefactos, progreso, memoria, sesiones, eventos y el bucket privado `study-pdfs`. `008_pdf_engine_v2.sql` elimina el límite de páginas, añade el estado de análisis y una búsqueda acotada de fragmentos. Las políticas académicas son de propietario; `is_admin` no concede lectura del material de otros estudiantes.
+
+El PDF original usa la ruta `userId/courseId/materialId/original.pdf` y se abre con URL firmada. Para PDF nuevos, el servidor guarda metadatos en `materials` y texto recuperable en `material_chunks`; no vuelve a guardar todas las páginas completas en `materials.content` y `materials.pages`. TXT y MD siguen usando `content`. Los registros antiguos siguen siendo legibles.
+
+El inicio de sesión descarga cursos y metadatos ligeros. Al abrir un curso se cargan sus materiales y progreso; al abrir un material, sus fragmentos, temas y artefactos. Nexo consulta solo fragmentos relevantes por pregunta. La caché del navegador conserva el trabajo local e importa cursos que aún no existan en el servidor. Una sincronización fallida muestra **Reintentar sincronización**.
+
+### Migraciones antes de producción
+
+Aplica los SQL de `sql/` **en orden**, sin editar migraciones ya ejecutadas: 001 → 006, luego `007_learning_workspace.sql` y `008_pdf_engine_v2.sql`. La migración 006 requiere la cuenta propietaria indicada en [sql/README.md](sql/README.md). Las migraciones 007 y 008 aún requieren verificación en el Supabase real del proyecto.
+
+Después de aplicar 007 y 008, comprueba en SQL Editor:
+
+```sql
+select column_name, data_type from information_schema.columns
+where table_schema = 'public' and table_name = 'materials'
+  and column_name in ('page_count', 'document_kind', 'analysis_status', 'analyzed_pages');
+
+select conname, pg_get_constraintdef(oid) from pg_constraint
+where conrelid = 'public.materials'::regclass and contype = 'c';
+
+select relname, relrowsecurity from pg_class
+where relnamespace = 'public'::regnamespace
+  and relname in ('courses', 'materials', 'material_chunks', 'material_topics',
+    'study_artifacts', 'study_progress', 'learning_state', 'study_sessions', 'study_session_events');
+
+select id, public, file_size_limit from storage.buckets where id = 'study-pdfs';
 ```
 
-`.env.local` está excluido por `.gitignore`.
+Para comprobar RLS y Storage, usa **dos sesiones autenticadas distintas** por la API o la aplicación: crea un curso y PDF con A; confirma que B no pueda listar, leer, modificar ni borrar esos registros y archivos. SQL Editor usa privilegios elevados y no demuestra el aislamiento de las sesiones autenticadas.
 
-## Supabase
-
-Ejecuta las migraciones en orden:
-
-1. `001_profiles.sql`
-2. `002_ai_queries.sql`
-3. `003_profile_onboarding.sql`
-4. `004_study_folders.sql`
-5. `005_feedback_admin.sql`
-6. `006_owner_admin.sql`
-
-La migración 006 exige que la cuenta `@sebasshulla` ya exista. Si no existe exactamente una coincidencia, falla de forma segura.
-
-## Cómo funciona PDF → estudio
-
-1. El navegador extrae texto del PDF página por página mediante PDF.js.
-2. Nexo construye una muestra distribuida del documento con etiquetas `[Página N]`.
-3. Esa muestra se envía al backend autenticado `/api/ai/solve` con la tarea interna `study_pack`.
-4. Nexo IA devuelve JSON estructurado para flashcards y quiz.
-5. El frontend valida el resultado antes de usarlo.
-6. El paquete queda guardado dentro del material en el almacenamiento local actual.
-
-> Los cursos, materiales y el avance de estudio todavía están en `localStorage`. Una próxima migración puede llevarlos a Supabase para sincronización completa entre dispositivos. La cuenta, la definición de espacios y la pertenencia de cursos a cada espacio usan Supabase.
-
-## Espacios de estudio
-
-La pestaña fija del borde derecho abre el explorador de espacios. **General** contiene los cursos sin carpeta; cada espacio creado contiene únicamente los cursos asignados allí. Inicio, Mis cursos y Progreso muestran el contenido del espacio activo. Los cursos nuevos se crean dentro de ese espacio y los enlaces directos a un curso activan automáticamente el espacio que le corresponde.
-
-En el explorador puedes crear un espacio, traer cursos existentes, moverlos entre carpetas o eliminar un espacio. Al eliminarlo, sus cursos regresan a General. Cada material se estudia dentro de su curso, con resumen, flashcards, un quiz de práctica y tutor en la misma vista. El avance se calcula a partir de resúmenes abiertos, tarjetas reveladas y preguntas respondidas; sigue al curso cuando se mueve. Resolver funciona como un chat con conversaciones y preguntas de seguimiento guardadas por espacio en este navegador.
-
-Como cursos y avance siguen siendo locales al navegador, cambiar de dispositivo no sincroniza estos datos todavía.
-
-## Consola privada de feedback
-
-Ruta interna:
-
-```text
-/nexo-ops/feedback-console
-```
-
-La seguridad real depende de `profiles.is_admin` + RLS de Supabase. La URL por sí sola no concede acceso.
-
-## Desarrollo local
+## Desarrollo y despliegue
 
 ```bash
 npm install
 npm run dev
-```
-
-## Comprobación de interfaz
-
-La interfaz se adapta a escritorio, tabletas y navegadores móviles iOS y Android. El acceso, recuperación de contraseña y registro se comprueban con respuestas simuladas de Supabase, sin crear cuentas ni enviar correos reales:
-
-```bash
-npx playwright install chromium webkit
+npm run dev:api
+npm run build
 npm run test:e2e
 ```
 
-Las pruebas recorren las secciones principales en Chrome, Safari/WebKit, un iPhone, un Android y una pantalla de 320 px. Para probar un inicio de sesión real, configura Supabase y utiliza una cuenta de prueba del proyecto.
+Copia `.env.example` a `.env.local` para desarrollo. `.env` y `.env.local` están ignorados. El frontend solo recibe las variables públicas `VITE_SUPABASE_*`; la clave de Nexo IA permanece en el servidor. Configura en Vercel las variables públicas de Supabase, las variables de validación de sesión del servidor y `NEXO_AI_*`. `vercel.json` conserva las rutas SPA. Añade las URL de retorno de recuperación de contraseña a Supabase Auth.
 
-Para que los enlaces de recuperación vuelvan a la aplicación, añade `http://localhost:5173/reset-password` y `https://TU-DOMINIO/reset-password` a las URL de redirección permitidas en Supabase Auth.
+## Limitaciones conocidas
 
-Los cursos y materiales todavía se guardan en el navegador. Aunque la interfaz se adapta a ambos sistemas móviles, este contenido no se sincroniza entre dispositivos.
-
-En otro terminal para Nexo IA:
-
-```bash
-npm run dev:api
-```
-
-## Vercel
-
-`vercel.json` contiene rewrites para las rutas SPA nuevas. Configura en Vercel las dos variables públicas de Supabase y las tres variables privadas de Nexo IA antes del deploy.
+- La migración y RLS no se han validado todavía contra el proyecto Supabase real.
+- El análisis visual de escaneos es manual y se limita a cuatro páginas por solicitud; no reconstruye automáticamente el texto de un libro entero.
+- El análisis inicial de un PDF largo cubre 80 páginas. El estudiante puede ampliar la cobertura desde el workspace.
+- El visor PDF es el visor nativo del navegador; su comportamiento exacto al saltar a `#page=N` depende del navegador.
+- Los PDFs anteriores a la optimización pueden conservar texto duplicado en columnas antiguas. La migración 008 no elimina contenido existente.
