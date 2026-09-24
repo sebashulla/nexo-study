@@ -22,7 +22,8 @@ function subjectRules(category) {
   return 'Adapta la explicación al tipo de problema y evita introducir datos que no estén en el enunciado o que no sean conocimiento necesario para resolverlo.'
 }
 
-function systemFor(task, category) {
+function systemFor(task, category, artifactType) {
+  if (task === 'artifact') return `Eres Nexo IA, tutor académico que prepara material de estudio universitario en español. Genera únicamente el artefacto ${artifactType} solicitado usando el contenido proporcionado. Conserva las páginas para que el estudiante pueda comprobar cada idea. No inventes información, ejemplos ni referencias ausentes del material. Devuelve exclusivamente un objeto JSON válido, sin Markdown ni texto adicional. No reveles proveedor, modelo ni detalles internos.`
   if (task === 'study_pack') return `Eres Nexo IA, un diseñador de material de estudio universitario en español. Vas a recibir texto extraído de apuntes o de un PDF del curso ${category || 'universitario'}. Tu trabajo es transformar SOLO ese contenido en un paquete de estudio de alta calidad.\n\nREGLAS:\n- No inventes hechos, definiciones ni datos ausentes del material.\n- Prioriza conceptos que tengan valor para comprender o rendir un examen.\n- Las flashcards deben ser atómicas: una idea principal por tarjeta.\n- El quiz debe tener exactamente cuatro alternativas plausibles por pregunta y una sola respuesta correcta.\n- Evita preguntas triviales, ambiguas o basadas en detalles irrelevantes.\n- Cuando el texto contiene etiquetas [Página N], usa esos números como sourcePage para dar trazabilidad.\n- Devuelve ÚNICAMENTE JSON válido. No uses Markdown, bloques de código, comentarios ni texto antes o después del objeto.\n- No reveles proveedor, modelo ni detalles internos.`
 
   if (task === 'review') return `Eres Nexo IA, un asistente académico en español. Revisa el ${category || 'trabajo universitario'} de forma útil, clara y respetuosa. No inventes bibliografía, citas, datos ni fuentes. Si una afirmación necesita evidencia, señálalo. Devuelve Markdown limpio con esta estructura cuando sea pertinente:\n\n## Evaluación breve\nUna valoración concisa del texto.\n\n## Lo que está bien\n- Puntos fuertes concretos.\n\n## Qué mejoraría\n1. Problemas prioritarios y por qué importan.\n\n## Propuesta de mejora\nFragmentos reescritos solo cuando aporte valor.\n\nNo incluyas comentarios sobre el proveedor, modelo o sistema interno.`
@@ -51,7 +52,7 @@ function cleanImages(images) {
 }
 
 function buildUserPrompt(payload) {
-  const max = payload.task === 'study_pack' ? 52000 : 50000
+  const max = payload.task === 'study_pack' ? 52000 : payload.task === 'artifact' ? 22000 : 50000
   const q = String(payload.question || 'Analiza el contenido adjunto.').slice(0, max)
   if (!payload.context) return q
   const context = String(payload.context).slice(0, 18000)
@@ -65,11 +66,11 @@ async function requestUpstream(config, payload, model, isDeep) {
 
   const generationConfig = {
     thinkingConfig: { thinkingLevel: isDeep ? 'high' : 'minimal' },
-    ...(payload.task === 'study_pack' ? { responseMimeType: 'application/json' } : {}),
+    ...(['study_pack', 'artifact'].includes(payload.task) ? { responseMimeType: 'application/json' } : {}),
   }
 
   const body = {
-    systemInstruction: { parts: [{ text: systemFor(payload.task, payload.category) }] },
+    systemInstruction: { parts: [{ text: systemFor(payload.task, payload.category, payload.artifactType) }] },
     contents: [{ role: 'user', parts }],
     generationConfig,
   }
@@ -104,6 +105,12 @@ function mapUpstreamError(status, internalMessage) {
 }
 
 export async function callNexoEngine(payload) {
+  if (payload.task === 'artifact' && !['flashcards', 'multiple_choice', 'written_questions', 'fill_blanks', 'notes'].includes(payload.artifactType)) {
+    const error = new Error('Unsupported artifact type')
+    error.status = 400
+    error.publicMessage = 'Esta actividad de estudio todavía no está disponible.'
+    throw error
+  }
   const config = aiConfig()
   if (!config.key || !config.standardModel || !config.deepModel) {
     const error = new Error('Nexo AI env is incomplete')

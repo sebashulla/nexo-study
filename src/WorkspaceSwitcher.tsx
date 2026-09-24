@@ -23,11 +23,9 @@ export function WorkspaceSwitcher({ selected, open, onOpenChange, children }: {
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
       }
     }
-    const oldOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
     drawerRef.current?.focus()
     document.addEventListener('keydown', keyboard)
-    return () => { document.body.style.overflow = oldOverflow; document.removeEventListener('keydown', keyboard) }
+    return () => document.removeEventListener('keydown', keyboard)
   }, [open, onOpenChange])
 
   return <>

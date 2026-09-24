@@ -3,12 +3,15 @@ import type { ImageAttachment } from './imageUtils'
 import type { NexoAiMode } from '../types'
 
 export interface SolvePayload {
-  task: 'solve' | 'review' | 'study_pack'
+  task: 'solve' | 'review' | 'study_pack' | 'artifact'
   question: string
   category?: string
   mode?: NexoAiMode
   deep?: boolean
   context?: string
+  courseId?: string
+  materialId?: string
+  artifactType?: string
   images?: ImageAttachment[]
 }
 
