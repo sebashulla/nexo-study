@@ -837,6 +837,12 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .material-visual-analysis > div { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 10px; }
 .material-visual-analysis label { display: grid; gap: 4px; font-size: var(--text-xs); }
 .material-visual-analysis input { width: 90px; min-height: 38px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--panel); color: var(--text); }
+.material-content-section { margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+.material-content-section > summary { min-height: 44px; padding: 12px 0; font-size: var(--text-sm); font-weight: 800; cursor: pointer; }
+.material-content-section .material-methods, .material-content-section .material-topics { margin: 0 0 15px; }
+.material-topic > summary { display: grid; gap: 4px; cursor: pointer; }
+.material-topic > p { margin: 10px 0; font-size: var(--text-sm); line-height: 1.6; }
+.material-topic > button { min-height: 36px; }
 .material-methods button, .material-topic { display: grid; gap: 4px; width: 100%; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--panel); color: var(--text); text-align: left; cursor: pointer; }
 .material-methods button strong, .material-topic strong { font-size: var(--text-sm); }
 .material-methods button span, .material-topic small, .material-topic > span { color: var(--muted); font-size: var(--text-xs); line-height: 1.45; }
@@ -858,6 +864,36 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .course-context-nav { display: flex; gap: 4px; overflow-x: auto; margin: 0 0 24px; padding-bottom: 9px; border-bottom: 1px solid var(--border); scrollbar-width: thin; }
 .course-context-nav button { flex: 0 0 auto; min-height: 40px; padding: 8px 13px; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--muted); font-size: var(--text-sm); font-weight: 700; cursor: pointer; }
 .course-context-nav button.active, .course-context-nav button:hover { background: var(--panel-2); color: var(--text); }
+.course-home-v2 { display: grid; gap: 21px; }
+.course-home-section { padding: 3px 0 16px; border-bottom: 1px solid var(--border); }
+.course-recommendations { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 9px; }
+.course-recommendations button { display: flex; justify-content: space-between; align-items: center; gap: 15px; min-height: 72px; padding: 13px 15px; text-align: left; line-height: 1.5; }
+.course-recommendations button strong { flex-shrink: 0; font-size: var(--text-xs); }
+.home-today { display: grid; gap: 13px; padding: 22px 0; border-bottom: 1px solid var(--border); }
+.home-today h2 { margin: 4px 0 0; font-size: clamp(22px, 2.5vw, 31px); }
+.home-today-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.home-today-actions button { max-width: 100%; white-space: normal; text-align: left; }
+.active-home .hero-card { min-height: 170px; padding: 20px 28px; grid-template-columns: minmax(0, 1fr); }
+.active-home .hero-study-art, .active-home .hero-caption { display: none; }
+.active-home .hero-card h2 { font-size: clamp(23px, 2.5vw, 31px); margin: 8px 0; }
+.active-home .hero-card p { margin-bottom: 12px; }
+.home-progress-brief { margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.upload-course-step, .upload-material-step { display: grid; gap: 13px; }
+.upload-course-step h3 { margin: 0; font-size: 20px; }
+.upload-course-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(175px, 1fr)); gap: 8px; }
+.upload-course-list button { min-height: 50px; text-align: left; }
+.upload-material-step > .text-button { justify-self: start; }
+.global-search-trigger { min-height: 38px; padding: 7px 11px; }
+.global-search-dialog { width: min(620px, calc(100vw - 28px)); padding: 23px; }
+.global-search { display: grid; gap: 17px; }
+.global-search label { display: grid; gap: 7px; font-size: var(--text-sm); }
+.global-search input { width: 100%; min-height: 48px; padding: 10px 13px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--panel-2); color: var(--text); font-size: 16px; }
+.global-search-results { display: grid; gap: 5px; max-height: min(60dvh, 480px); overflow-y: auto; }
+.global-search-results > button { display: grid; gap: 3px; min-height: 49px; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--panel-2); color: var(--text); text-align: left; cursor: pointer; }
+.global-search-results button span { color: var(--muted); font-size: var(--text-xs); }
+.global-search-results button strong { font-size: var(--text-sm); }
+.progress-focus > div, .progress-recent > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.progress-recent > div { display: grid; }
 .course-artifact-library { display: grid; gap: 13px; }
 .course-artifact-group { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--panel); }
 .course-artifact-group h4 { margin: 0 0 5px; font-size: var(--text-base); }
@@ -948,6 +984,16 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
 .exam-options button { min-height: 44px; padding: 11px 13px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--panel); color: var(--text); text-align: left; cursor: pointer; }
 @media (max-width: 950px) { .course-overview { grid-template-columns: minmax(0, 1fr); gap: 10px; } }
 @media (max-width: 700px) {
+  .material-workspace-head { position: sticky; top: 0; z-index: 7; padding: 8px 0; background: var(--bg-app); }
+  .material-mobile-tabs { position: sticky; top: 92px; z-index: 7; background: var(--bg-app); }
+  .material-nexo-head { position: sticky; top: 0; z-index: 2; background: var(--panel-2); }
+  .material-nexo-content, .material-chat-answer { font-size: 15px; line-height: 1.65; }
+  .material-content-section > summary { font-size: 14px; }
+  .course-recommendations { grid-template-columns: minmax(0, 1fr); }
+  .home-today-actions { display: grid; }
+  .active-home .hero-card { padding: 18px 20px; }
+  .global-search-trigger { min-width: 38px; padding: 6px; }
+  .global-search-trigger span { display: none; }
   .material-workspace-head { align-items: flex-start; flex-direction: column; gap: 12px; }
   .material-workspace-head-actions { justify-content: flex-start; }
   .material-workspace-head-actions .panel-toggle { display: none; }

@@ -103,6 +103,7 @@ test('a real PDF opens its workspace, contextual Nexo and study mode', async ({ 
   await page.getByRole('button', { name: /Agregar material/ }).first().click()
   dialog = page.getByRole('dialog')
   await dialog.locator('input[type="file"]').setInputFiles({ name: 'celula.pdf', mimeType: 'application/pdf', buffer: onePagePdf() })
+  await dialog.getByRole('button', { name: 'Guardar y abrir material' }).click()
   await expect(page).toHaveURL(/\/materials\/[^/]+\/workspace$/)
   await expect(page.getByRole('heading', { name: 'celula' }).first()).toBeVisible()
   await expect(page.locator('.material-document iframe')).toBeVisible()

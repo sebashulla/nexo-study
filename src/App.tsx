@@ -2,9 +2,10 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { demoCourses } from './data/demo'
 import { extractPdf, INITIAL_PDF_PAGE_BUDGET, MAX_PDF_BYTES } from './lib/documentEngine'
 import { chunksForMaterial, topicsForMaterial } from './lib/learningContext'
-import { displayMaterialTitle } from './lib/materialTitles'
+import { displayMaterialTitle, suggestMaterialTitle } from './lib/materialTitles'
+import { quickSummaryFor } from './lib/quickSummary'
 import { loadCourseArtifacts, loadCourseDetails, loadMaterialContext, saveActivity, saveArtifact, saveCourses, saveLearningState, saveMaterialContext, saveSessionEvents, saveSessions, signedPdfUrl, synchronizeCourses, uploadPrivatePdf } from './lib/learningRepository'
-import { applyRecall, loadLearningMemory, masterySummary, saveLearningMemory, type LearningMemory, type RecallRating } from './lib/learningState'
+import { applyRecall, loadLearningMemory, saveLearningMemory, type LearningMemory, type RecallRating } from './lib/learningState'
 import { activateStudySession, buildStudySession, completeSessionStep, loadLocalSessionEvents, loadLocalSessions, saveLocalSessionEvents, saveLocalSessions, type SessionDuration, type SessionObjective } from './lib/studySessions'
 import { artifactFlashcards, artifactQuestions, generateArtifactWithAI } from './lib/artifactPrompts'
 import { generateStudyPack } from './lib/studyEngine'
@@ -21,10 +22,13 @@ import { Icon } from './Icon'
 import { authErrorMessage } from './auth/authErrors'
 import { useWorkspaces } from './hooks/useWorkspaces'
 import { coursesInWorkspace, workspaceForCourse, GENERAL_WORKSPACE } from './lib/workspaces'
-import { loadStudyActivity, saveStudyActivity, workspaceProgress, type MaterialActivity, type StudyActivity } from './lib/studyProgress'
+import { loadStudyActivity, materialProgress, saveStudyActivity, studyPackFor, workspaceProgress, type MaterialActivity, type StudyActivity } from './lib/studyProgress'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
 import { FoldersPage } from './FoldersPage'
 import { ProgressPage } from './ProgressPage'
+import { CourseOverview } from './CourseOverview'
+import { GlobalSearch } from './GlobalSearch'
+import { courseRecommendations, type CourseRecommendation } from './lib/productIntelligence'
 import type { ExamItem } from './ExamRunner'
 
 const AuthPage = lazy(() => import('./auth/AuthPage').then(module => ({ default: module.AuthPage })))
@@ -58,8 +62,7 @@ function recoverInterruptedWork(courses: Course[]): Course[] {
 
 function withMinimumSummary(material: Material): Material {
   if (material.artifacts?.some(artifact => artifact.type === 'summary' && artifact.status === 'ready')) return material
-  const topics = material.topics ?? []
-  const summary = topics.slice(0, 5).map(topic => topic.summary.trim()).filter(Boolean).join(' ').slice(0, 1200)
+  const summary = quickSummaryFor(material)
   if (!summary) return material
   const now = new Date().toISOString()
   return { ...material, artifacts: [...(material.artifacts ?? []), {
@@ -146,6 +149,11 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [courseBusy, setCourseBusy] = useState(false)
   const [courseError, setCourseError] = useState('')
   const [showMaterialForm, setShowMaterialForm] = useState(false)
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false)
+  const [uploadCourseId, setUploadCourseId] = useState('')
+  const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null)
+  const [manualDraft, setManualDraft] = useState(false)
+  const [resumeUploadAfterCourse, setResumeUploadAfterCourse] = useState(false)
   const [courseName, setCourseName] = useState('')
   const [courseEmoji, setCourseEmoji] = useState('📘')
   const [materialTitle, setMaterialTitle] = useState('')
@@ -154,6 +162,16 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [sourceType, setSourceType] = useState<Material['sourceType']>('text')
   const [sourceName, setSourceName] = useState('')
   const [importStatus, setImportStatus] = useState('')
+
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault(); setShowGlobalSearch(true)
+      }
+    }
+    document.addEventListener('keydown', shortcut)
+    return () => document.removeEventListener('keydown', shortcut)
+  }, [])
   const [studyMode, setStudyMode] = useState<StudyMode>('summary')
   const [flashIndex, setFlashIndex] = useState(0)
   const [flashRevealed, setFlashRevealed] = useState(false)
@@ -433,7 +451,6 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const activeMaterial = activeCourse
     ? (route.materialId ? activeCourse.materials.find(material => material.id === route.materialId) : (activeCourse.materials.find(material => material.id === activeMaterialId) ?? activeCourse.materials[0]))
     : undefined
-  const weakConcepts = activeCourse ? masterySummary(memory, activeCourse.materials.map(material => material.id)).weak.slice(0, 3) : []
 
   useEffect(() => {
     const courseId = route.courseId
@@ -542,6 +559,12 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const totalMaterials = workspaceCourses.reduce((acc, course) => acc + course.materials.length, 0)
   const aiPreparedMaterials = workspaceCourses.reduce((acc, course) => acc + course.materials.filter(m => m.studyPackMeta?.source === 'nexo-ai').length, 0)
   const currentProgress = workspaceProgress(workspaceCourses, activity)
+  const recentHomeActivity = workspaceCourses.flatMap(course => course.materials
+    .filter(material => activity[material.id]?.lastStudiedAt)
+    .map(material => ({ course, material, at: activity[material.id].lastStudiedAt ?? '' })))
+    .sort((a, b) => b.at.localeCompare(a.at))[0]
+  const homeSuggestions = recentHomeActivity
+    ? courseRecommendations(recentHomeActivity.course, activity, memory, sessions).slice(0, 2) : []
 
   const resetStudy = () => { setQuizAnswers({}); setFlashIndex(0); setFlashRevealed(false) }
 
@@ -583,16 +606,45 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     setCourses(prev => [...prev, course])
     setActiveCourseId(course.id)
     setCourseName(''); setCourseEmoji('📘'); setShowCourseForm(false)
+    if (resumeUploadAfterCourse) {
+      setUploadCourseId(course.id)
+      setShowMaterialForm(true)
+      setResumeUploadAfterCourse(false)
+    }
     setCourseBusy(false)
     navigate(coursePath(course.id))
   }
 
   const resetMaterialForm = () => {
-    setMaterialTitle(''); setMaterialText(''); setMaterialPages(undefined); setSourceType('text'); setSourceName(''); setImportStatus('')
+    setMaterialTitle(''); setMaterialText(''); setMaterialPages(undefined); setSourceType('text'); setSourceName('')
+    setPendingUploadFile(null); setManualDraft(false); setImportStatus('')
+  }
+
+  const startMaterialUpload = (courseId?: string) => {
+    resetMaterialForm()
+    setUploadCourseId(courseId ?? '')
+    setShowMaterialForm(true)
   }
 
   const addMaterial = async () => {
-    if (!activeCourse || !materialTitle.trim() || !materialText.trim()) return
+    const targetCourse = courses.find(course => course.id === uploadCourseId)
+    if (!targetCourse || !materialTitle.trim()) return
+    if (pendingUploadFile && /\.pdf$/i.test(pendingUploadFile.name)) {
+      const file = pendingUploadFile
+      const material: Material = {
+        id: `mat-${uid()}`, title: materialTitle.trim(), text: '',
+        createdAt: new Date().toISOString(), sourceType: 'pdf', sourceName: file.name,
+        processingStatus: 'queued', processingStage: 'reading', analysisStatus: 'not_started', documentKind: 'unknown',
+      }
+      setPdfFiles(current => ({ ...current, [material.id]: file }))
+      setCourses(current => current.map(item => item.id === targetCourse.id ? { ...item, materials: [...item.materials, material] } : item))
+      setActiveCourseId(targetCourse.id); setActiveMaterialId(material.id)
+      setShowMaterialForm(false); resetMaterialForm()
+      navigate(materialWorkspacePath(targetCourse.id, material.id))
+      processPdfMaterial(targetCourse, material, file)
+      return
+    }
+    if (!materialText.trim()) return
     const baseMaterial: Material = {
       id: `mat-${uid()}`,
       title: materialTitle.trim(),
@@ -607,16 +659,16 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     }
     const chunks = chunksForMaterial(baseMaterial)
     const material = withMinimumSummary({ ...baseMaterial, chunks, topics: topicsForMaterial(baseMaterial, chunks) })
-    const courseId = activeCourse.id
+    const courseId = targetCourse.id
     setCourses(prev => prev.map(course => course.id === courseId ? { ...course, materials: [...course.materials, material] } : course))
     setActiveMaterialId(material.id)
     resetStudy()
     setShowMaterialForm(false)
     resetMaterialForm()
-    navigate(materialPath(courseId, material.id))
+    navigate(materialWorkspacePath(courseId, material.id))
     if (remoteEnabled) void (async () => {
       try {
-        await saveCourses(user.id, [{ ...activeCourse, materials: [...activeCourse.materials, material] }])
+        await saveCourses(user.id, [{ ...targetCourse, materials: [...targetCourse.materials, material] }])
         await saveMaterialContext(user.id, courseId, material)
         for (const artifact of material.artifacts ?? []) await saveArtifact(user.id, courseId, artifact)
       } catch {
@@ -757,34 +809,18 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
 
   const importFile = async (file?: File) => {
     if (!file) return
-    if (/\.pdf$/i.test(file.name)) {
-      if (!activeCourse) { setImportStatus('⚠ Primero abre un curso para agregar el PDF.'); return }
-      if (file.size > MAX_PDF_BYTES) { setImportStatus('⚠ Este PDF supera 25 MB. Divide el documento y vuelve a subirlo.'); return }
-      const course = activeCourse
-      const material: Material = {
-        id: `mat-${uid()}`, title: file.name.replace(/\.pdf$/i, ''), text: '',
-        createdAt: new Date().toISOString(), sourceType: 'pdf', sourceName: file.name,
-        processingStatus: 'queued', processingStage: 'reading', analysisStatus: 'not_started', documentKind: 'unknown',
-      }
-      setPdfFiles(current => ({ ...current, [material.id]: file }))
-      setCourses(current => current.map(item => item.id === course.id ? { ...item, materials: [...item.materials, material] } : item))
-      setActiveMaterialId(material.id)
-      setShowMaterialForm(false)
-      resetMaterialForm()
-      navigate(materialWorkspacePath(course.id, material.id))
-
-      processPdfMaterial(course, material, file)
-      return
+    if (!/\.(pdf|txt|md)$/i.test(file.name)) { setImportStatus('⚠ Usa PDF, TXT o MD.'); return }
+    if (/\.pdf$/i.test(file.name) && file.size > MAX_PDF_BYTES) {
+      setImportStatus('⚠ Este PDF supera 25 MB. Divide el documento y vuelve a subirlo.'); return
     }
-    setMaterialTitle(file.name.replace(/\.(txt|md|pdf)$/i, ''))
+    setPendingUploadFile(file)
+    setMaterialTitle(suggestMaterialTitle(file.name))
     setSourceName(file.name)
+    setManualDraft(false)
+    if (/\.pdf$/i.test(file.name)) { setSourceType('pdf'); setMaterialText(''); setImportStatus('Revisa el título y confirma la subida.'); return }
     setImportStatus('Leyendo archivo…')
     try {
-      if (/\.(txt|md)$/i.test(file.name)) {
-        setMaterialText(await file.text()); setMaterialPages(undefined); setSourceType('text'); setImportStatus('✓ Texto importado correctamente')
-      } else {
-        setImportStatus('Formato no compatible todavía. Usa PDF, TXT o MD.')
-      }
+      setMaterialText(await file.text()); setMaterialPages(undefined); setSourceType('text'); setImportStatus('✓ Texto listo para guardar')
     } catch (error) {
       setImportStatus(`⚠ ${error instanceof Error ? error.message : 'No se pudo leer el archivo.'}`)
     }
@@ -798,10 +834,19 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   }
 
   const openMaterial = (courseId: string, materialId: string) => {
-    const material = courses.find(course => course.id === courseId)?.materials.find(item => item.id === materialId)
     setSourceJump(null)
     setActiveCourseId(courseId); setActiveMaterialId(materialId); resetStudy()
-    navigate(material?.sourceType === 'pdf' ? materialWorkspacePath(courseId, materialId) : materialPath(courseId, materialId))
+    navigate(materialWorkspacePath(courseId, materialId))
+  }
+
+  const openRecommendation = (course: Course, recommendation: CourseRecommendation) => {
+    const material = course.materials.find(item => item.id === recommendation.materialId)
+    if (recommendation.action === 'session') { navigate(courseSectionPath(course.id, 'practice')); return }
+    if (!material) return
+    if (recommendation.action === 'practice') { navigate(materialStudyPath(course.id, material.id, 'multiple-choice')); return }
+    if (recommendation.action === 'review') { navigate(materialStudyPath(course.id, material.id, 'flashcards')); return }
+    openMaterial(course.id, material.id)
+    if (recommendation.action === 'analyze') analyzeMorePdfPages(course, material)
   }
 
   const switchWorkspace = (id: string) => {
@@ -873,7 +918,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   if (!workspaces.ready || !learningReady) return <div className="app-loading workspace-loading"><BrandLogo iconOnly/><strong>{!learningReady ? 'Preparando tu espacio de aprendizaje…' : workspaces.loading ? 'Cargando tus espacios…' : 'No pudimos cargar tus espacios'}</strong>{workspaces.error && learningReady && <><p>{workspaces.error}</p><button className="primary" onClick={() => workspaces.refresh()}>Reintentar</button></>}</div>
 
   return (
-    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''} ${showWorkspaceDrawer ? 'workspace-drawer-open' : ''} ${showCourseForm || showMaterialForm ? 'dialog-open' : ''} ${route.workspace || route.materialStudyMode ? 'intensive-study' : ''}`}>
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''} ${showWorkspaceDrawer ? 'workspace-drawer-open' : ''} ${showCourseForm || showMaterialForm || showGlobalSearch ? 'dialog-open' : ''} ${route.workspace || route.materialStudyMode ? 'intensive-study' : ''}`}>
       <a href="#main-content" className="skip-link">Saltar al contenido</a>
       {mobileSidebarOpen && <button className="mobile-sidebar-backdrop" aria-label="Cerrar navegación" onClick={() => { setMobileSidebarOpen(false); mobileMenuRef.current?.focus() }}/>}
       <aside ref={sidebarRef} className="sidebar" role={mobileSidebarOpen ? 'dialog' : undefined} aria-modal={mobileSidebarOpen || undefined} aria-label="Barra lateral principal">
@@ -893,7 +938,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
       </WorkspaceSwitcher>
 
       <main className="main-content" id="main-content" tabIndex={-1}>
-        <header className="topbar"><button ref={mobileMenuRef} className="mobile-menu-toggle" aria-label="Abrir navegación" aria-expanded={mobileSidebarOpen} onClick={() => setMobileSidebarOpen(true)}><Icon name="more"/></button><div><p className="eyebrow">Nexo Study</p><h1>{topTitle}</h1></div><div className="top-actions"><div className="ai-chip"><span className="status-dot"></span><strong>Nexo IA</strong></div><div className="account-wrap" ref={accountRef}><button className="avatar" aria-label="Mi cuenta" aria-expanded={showAccountMenu} aria-controls="account-menu" onClick={() => setShowAccountMenu(value => !value)}>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</button>{showAccountMenu && <div className="account-menu" id="account-menu"><strong>{user.user_metadata?.full_name || 'Estudiante Nexo'}</strong><span>{user.email}</span><button disabled={signingOut} onClick={logout}>{signingOut ? 'Cerrando sesión…' : 'Cerrar sesión'}</button>{accountError && <p role="alert" className="auth-alert error">{accountError}</p>}</div>}</div></div></header>
+        <header className="topbar"><button ref={mobileMenuRef} className="mobile-menu-toggle" aria-label="Abrir navegación" aria-expanded={mobileSidebarOpen} onClick={() => setMobileSidebarOpen(true)}><Icon name="more"/></button><div><p className="eyebrow">Nexo Study</p><h1>{topTitle}</h1></div><div className="top-actions"><button className="secondary global-search-trigger" aria-label="Buscar en Nexo Study" onClick={() => setShowGlobalSearch(true)}>⌕ <span>Buscar</span></button><div className="ai-chip"><span className="status-dot"></span><strong>Nexo IA</strong></div><div className="account-wrap" ref={accountRef}><button className="avatar" aria-label="Mi cuenta" aria-expanded={showAccountMenu} aria-controls="account-menu" onClick={() => setShowAccountMenu(value => !value)}>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</button>{showAccountMenu && <div className="account-menu" id="account-menu"><strong>{user.user_metadata?.full_name || 'Estudiante Nexo'}</strong><span>{user.email}</span><button disabled={signingOut} onClick={logout}>{signingOut ? 'Cerrando sesión…' : 'Cerrar sesión'}</button>{accountError && <p role="alert" className="auth-alert error">{accountError}</p>}</div>}</div></div></header>
         {workspaces.error && <div role="status" className="workspace-warning">{workspaces.error} Estás viendo la última organización guardada. <button onClick={() => workspaces.refresh()}>Reintentar</button></div>}
         {storageError && <p role="alert" className="auth-alert error">{storageError}</p>}
         {syncError && <p role="status" className="workspace-warning">{syncError} <button onClick={retrySynchronization}>Reintentar sincronización</button></p>}
@@ -902,9 +947,13 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
 
         {(route.courseId || route.materialId) && <div className="route-breadcrumbs"><button onClick={() => navigate('/courses')}>Cursos</button>{activeCourse && <><span>›</span><button onClick={() => navigate(coursePath(activeCourse.id))}>{activeCourse.emoji} {activeCourse.name}</button></>}{route.materialId && activeMaterial && <><span>›</span><strong>{activeMaterial.title}</strong></>}</div>}
 
-        {tab === 'inicio' && <section className="page-grid home-page">
-          <div className="hero-card"><div><span className="pill">✦ Tu material. Tu manera de aprender.</span><h2>De tus apuntes a tu próximo <em>logro.</em></h2><p>Sube un PDF y encuentra claridad. Resúmenes, flashcards y preguntas para avanzar a tu ritmo.</p><div className="hero-actions"><button className="primary" onClick={() => activeCourse ? setShowMaterialForm(true) : setShowCourseForm(true)}>＋ Subir material</button><button className="secondary" onClick={() => setTab('cursos')}>Ver mis cursos ↗</button></div><div className="hero-caption">ORGANIZA <span>·</span> COMPRENDE <span>·</span> PRACTICA</div></div><div className="hero-study-art" aria-hidden="true"><div className="art-orbit"/><div className="art-sheet art-sheet-back"/><div className="art-sheet"><span>✦ NEXO STUDY</span><h3>Todo empieza<br/>con una idea.</h3><i/><i/><i/><div><b>✓</b> Lista para aprender</div></div><div className="art-tag">✦ De PDF a posibilidades</div></div></div>
-          <div className="stats-grid"><Stat label="Cursos" value={`${workspaceCourses.length}`} hint="en este espacio"/><Stat label="Materiales" value={`${totalMaterials}`} hint="guardados"/><Stat label="PDF preparados" value={`${aiPreparedMaterials}`} hint="con Nexo IA"/><Stat label="Avance" value={`${currentProgress.percent}%`} hint="de este espacio"/></div>
+        {tab === 'inicio' && <section className={`page-grid home-page ${recentHomeActivity ? 'active-home' : ''}`}>
+          {recentHomeActivity && <div className="home-today"><div><p className="eyebrow">Hoy · Tu siguiente paso</p><h2>Bienvenido de nuevo{typeof user.user_metadata?.full_name === 'string' ? `, ${user.user_metadata.full_name.split(' ')[0]}` : ''}</h2></div>
+            <div className="home-today-actions"><button className="primary" onClick={() => openMaterial(recentHomeActivity.course.id, recentHomeActivity.material.id)}>Continuar · {displayMaterialTitle(recentHomeActivity.material.title)} →</button>
+              {homeSuggestions.map(item => <button className="secondary" key={item.id} onClick={() => openRecommendation(recentHomeActivity.course, item)}>{item.text} →</button>)}
+              <button className="text-button" onClick={() => navigate(courseSectionPath(recentHomeActivity.course.id, 'practice'))}>Preparar sesión de 15 min →</button></div></div>}
+          <div className="hero-card"><div><span className="pill">✦ Tu material. Tu manera de aprender.</span><h2>De tus apuntes a tu próximo <em>logro.</em></h2><p>Sube un PDF y encuentra claridad. Resúmenes, flashcards y preguntas para avanzar a tu ritmo.</p><div className="hero-actions"><button className="primary" onClick={() => startMaterialUpload()}>＋ Subir material</button><button className="secondary" onClick={() => setTab('cursos')}>Ver mis cursos ↗</button></div><div className="hero-caption">ORGANIZA <span>·</span> COMPRENDE <span>·</span> PRACTICA</div></div><div className="hero-study-art" aria-hidden="true"><div className="art-orbit"/><div className="art-sheet art-sheet-back"/><div className="art-sheet"><span>✦ NEXO STUDY</span><h3>Todo empieza<br/>con una idea.</h3><i/><i/><i/><div><b>✓</b> Lista para aprender</div></div><div className="art-tag">✦ De PDF a posibilidades</div></div></div>
+          {!recentHomeActivity ? <div className="stats-grid"><Stat label="Cursos" value={`${workspaceCourses.length}`} hint="en este espacio"/><Stat label="Materiales" value={`${totalMaterials}`} hint="guardados"/><Stat label="PDF preparados" value={`${aiPreparedMaterials}`} hint="con Nexo IA"/><Stat label="Avance" value={`${currentProgress.percent}%`} hint="de este espacio"/></div> : <p className="home-progress-brief">{workspaceCourses.length} cursos · {totalMaterials} materiales · {currentProgress.percent}% de actividad en este espacio</p>}
           <section className="panel wide home-courses"><div className="section-head"><div><p className="eyebrow">{workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</p><h3>Tus cursos</h3></div><button className="text-button" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>{workspaceCourses.length ? <div className="course-row">{workspaceCourses.map(course => <button className="course-mini" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>›</b></button>)}</div> : <div className="workspace-home-empty"><p>Este espacio todavía no tiene cursos. Usa la pestaña del borde derecho para traer uno.</p></div>}</section>
         </section>}
 
@@ -915,13 +964,12 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
 
         {tab === 'cursos' && route.courseId && !route.materialId && <section className="course-page">
           {activeCourse ? <>
-            <div className="course-page-hero"><div className="course-page-emoji">{activeCourse.emoji}</div><div><p className="eyebrow">Curso</p><h2>{activeCourse.name}</h2><p>{activeCourse.materials.length} materiales · Cada documento tiene su espacio de aprendizaje.</p></div><button className="primary" onClick={() => setShowMaterialForm(true)}>+ Agregar material</button></div>
+            <div className="course-page-hero"><div className="course-page-emoji">{activeCourse.emoji}</div><div><p className="eyebrow">Curso</p><h2>{activeCourse.name}</h2><p>{activeCourse.materials.length} materiales · Cada documento tiene su espacio de aprendizaje.</p></div><button className="primary" onClick={() => startMaterialUpload(activeCourse.id)}>+ Agregar material</button></div>
             <nav className="course-context-nav" aria-label={`Secciones de ${activeCourse.name}`}>{([
               ['overview', 'Resumen'], ['materials', 'Materiales'], ['ai', 'Nexo IA'], ['library', 'Biblioteca'], ['practice', 'Práctica'], ['progress', 'Progreso'],
             ] as [CourseSection, string][]).map(([section, label]) => <button key={section} className={(route.courseSection ?? 'overview') === section ? 'active' : ''} aria-current={(route.courseSection ?? 'overview') === section ? 'page' : undefined} onClick={() => navigate(courseSectionPath(activeCourse.id, section))}>{label}</button>)}</nav>
-            {(route.courseSection === undefined || route.courseSection === 'overview') && <div className="course-overview"><div className="course-overview-main"><p className="eyebrow">Continuar estudiando</p><h3>{activeCourse.materials.length ? displayMaterialTitle(activeCourse.materials[activeCourse.materials.length - 1].title) : 'Tu primer material'}</h3><p>{activeCourse.materials.length ? 'Retoma el documento y decide cómo avanzar con Nexo.' : 'Agrega un PDF o tus apuntes para empezar.'}</p><button className="primary" onClick={() => activeCourse.materials.length ? openMaterial(activeCourse.id, activeCourse.materials[activeCourse.materials.length - 1].id) : setShowMaterialForm(true)}>{activeCourse.materials.length ? 'Continuar →' : 'Agregar material'}</button></div><div className="course-overview-side"><strong>{workspaceProgress([activeCourse], activity).percent}% de actividad</strong><p>Dominio estimado: {masterySummary(memory, activeCourse.materials.map(item => item.id)).percent}% · {masterySummary(memory, activeCourse.materials.map(item => item.id)).weak.length} conceptos por repasar</p><div className="course-overview-actions"><button className="secondary" onClick={() => navigate(courseSectionPath(activeCourse.id, 'practice'))}>Preparar sesión →</button><button className="text-button" onClick={() => navigate(courseSectionPath(activeCourse.id, 'ai'))}>Preguntar a Nexo →</button></div></div></div>}
-            {(route.courseSection === undefined || route.courseSection === 'overview') && weakConcepts.length > 0 && <div className="course-weak-topics"><p className="eyebrow">Temas por reforzar</p><div>{weakConcepts.map(concept => <button className="secondary" key={concept.key} onClick={() => openMaterial(activeCourse.id, concept.materialId)}>{concept.label} →</button>)}</div></div>}
-            {(route.courseSection === undefined || route.courseSection === 'overview' || route.courseSection === 'materials') && (activeCourse.materials.length ? <div className="materials-grid course-materials-grid">{activeCourse.materials.map(material => <button className="material-card" key={material.id} onClick={() => openMaterial(activeCourse.id, material.id)}><div className="material-meta"><span className="file-icon">{material.sourceType === 'pdf' ? 'PDF' : '≡'}</span>{material.pageCount ? <span className="source-badge">{material.pageCount} págs.</span> : null}{material.studyPackMeta?.source === 'nexo-ai' && <span className="ai-ready-badge">✦ IA lista</span>}</div><strong>{displayMaterialTitle(material.title)}</strong><p>{material.analysisStatus === 'reading' ? 'Nexo está leyendo este documento…' : material.text.replace(/\[Página \d+\]/g, '').slice(0, 125)}{material.text.length > 125 ? '…' : ''}</p><small>Estudiar material →</small></button>)}</div> : <EmptyState title="Todavía no hay materiales" text="Sube un PDF para abrirlo junto a Nexo y elegir cómo estudiar." action="Agregar material" onClick={() => setShowMaterialForm(true)} />)}
+            {(route.courseSection === undefined || route.courseSection === 'overview') && <CourseOverview course={activeCourse} activity={activity} memory={memory} sessions={sessions} onOpenMaterial={materialId => openMaterial(activeCourse.id, materialId)} onUpload={() => startMaterialUpload(activeCourse.id)} onRecommend={recommendation => openRecommendation(activeCourse, recommendation)} onCourseAi={() => navigate(courseSectionPath(activeCourse.id, 'ai'))}/>}
+            {(route.courseSection === undefined || route.courseSection === 'overview' || route.courseSection === 'materials') && (activeCourse.materials.length ? <><div className="section-head"><h3>{route.courseSection === 'materials' ? 'Todos los materiales' : 'Materiales recientes'}</h3></div><div className="materials-grid course-materials-grid">{[...activeCourse.materials].sort((a, b) => (activity[b.id]?.lastStudiedAt ?? b.createdAt).localeCompare(activity[a.id]?.lastStudiedAt ?? a.createdAt)).slice(0, route.courseSection === 'materials' ? undefined : 3).map(material => <button className="material-card" key={material.id} onClick={() => openMaterial(activeCourse.id, material.id)}><div className="material-meta"><span className="file-icon">{material.sourceType === 'pdf' ? 'PDF' : '≡'}</span>{material.pageCount ? <span className="source-badge">{material.pageCount} págs.</span> : null}{material.studyPackMeta?.source === 'nexo-ai' && <span className="ai-ready-badge">✦ IA lista</span>}</div><strong>{displayMaterialTitle(material.title)}</strong><p>{material.analysisStatus === 'reading' ? 'Nexo está leyendo este documento…' : material.analysisStatus === 'partial' ? `${material.analyzedPages?.length ?? 0} páginas preparadas` : material.sourceType === 'pdf' ? 'Documento listo para estudiar' : 'Apuntes listos para estudiar'}</p><small>{activity[material.id]?.lastStudiedAt ? `${materialProgress(studyPackFor(material), activity[material.id], material)}% actividad · ${new Date(activity[material.id].lastStudiedAt!).toLocaleDateString('es-PE')}` : 'Continuar →'}</small></button>)}</div></> : <EmptyState title="Todavía no hay materiales" text="Agrega un PDF o tus apuntes. Nexo aprende del contenido de este curso." action="Agregar material" onClick={() => startMaterialUpload(activeCourse.id)} />)}
             {route.courseSection === 'ai' && <CourseAiPage key={activeCourse.id} course={activeCourse} memory={memory} activity={activity} onOpenSource={(materialId, page) => { openMaterial(activeCourse.id, materialId); setSourceJump({ materialId, page }) }}/>}
             {route.courseSection === 'library' && <div className="course-artifact-library"><div className="section-head"><div><p className="eyebrow">Creado con tus materiales</p><h3>Biblioteca generada</h3></div></div>{activeCourse.materials.map(material => {
               const readyArtifacts = (material.artifacts ?? []).filter(item => item.status === 'ready')
@@ -929,7 +977,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
               const artifactLabels: Partial<Record<StudyArtifactType, string>> = { summary: 'Resumen', flashcards: 'Flashcards', multiple_choice: 'Opción múltiple', written_questions: 'Preguntas escritas', fill_blanks: 'Completar espacios', notes: 'Apuntes', exam: 'Simulacro' }
               const artifactModes: Partial<Record<StudyArtifactType, MaterialStudyMode>> = { flashcards: 'flashcards', multiple_choice: 'multiple-choice', written_questions: 'written', fill_blanks: 'fill-blanks', notes: 'notes', exam: 'exam' }
               return <section className="course-artifact-group" key={material.id}><div><h4>{material.title}</h4><p>{readyArtifacts.length ? `${readyArtifacts.length} recursos listos` : 'Prepara recursos desde este material cuando los necesites.'}</p></div><div className="course-artifact-links">{readyArtifacts.map(artifact => <button key={artifact.id} className="secondary" onClick={() => { const mode = artifactModes[artifact.type]; navigate(mode ? materialStudyPath(activeCourse.id, material.id, mode) : materialPath(activeCourse.id, material.id)) }}>{artifactLabels[artifact.type]} →</button>)}<button className="text-button" onClick={() => openMaterial(activeCourse.id, material.id)}>{readyArtifacts.length ? 'Abrir material' : 'Abrir y preparar →'}</button></div></section>
-            })}{!activeCourse.materials.length && <div className="course-section-empty"><p>Agrega un material para preparar tus primeros recursos.</p><button className="primary" onClick={() => setShowMaterialForm(true)}>Agregar material</button></div>}</div>}
+            })}{!activeCourse.materials.length && <div className="course-section-empty"><p>Agrega un material para preparar tus primeros recursos.</p><button className="primary" onClick={() => startMaterialUpload(activeCourse.id)}>Agregar material</button></div>}</div>}
             {route.courseSection === 'practice' && <CoursePracticePage course={activeCourse} sessions={sessions.filter(session => session.courseId === activeCourse.id)} onPrepare={(minutes, objective) => prepareSession(activeCourse, minutes, objective)} onComplete={completePracticeStep} onOpenActivity={openPracticeActivity}/>}
             {route.courseSection === 'progress' && <ProgressPage workspace={{ id: activeCourse.id, name: activeCourse.name, emoji: activeCourse.emoji, created_at: '' }} courses={[activeCourse]} activity={activity} memory={memory} sessions={sessions.filter(session => session.courseId === activeCourse.id)} onOpenMaterial={openMaterial} />}
           </> : <EmptyState title="Curso no encontrado" text="Este curso no existe en este dispositivo." action="Volver a cursos" onClick={() => navigate('/courses')} />}
@@ -943,7 +991,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
         {tab === 'cursos' && route.materialStudyMode && !['flashcards', 'multiple-choice'].includes(route.materialStudyMode) && activeCourse && activeMaterial && <StudyMethodPage key={`${activeMaterial.id}:${route.materialStudyMode}`} course={activeCourse} material={activeMaterial} mode={route.materialStudyMode} onBack={() => navigate(activeMaterial.sourceType === 'pdf' ? materialWorkspacePath(activeCourse.id, activeMaterial.id) : materialPath(activeCourse.id, activeMaterial.id))} onGenerate={generateArtifact} onSaveExam={saveExamArtifact} onRecall={(concept, rating) => recordRecall(activeMaterial.id, concept, rating)} onPractice={(type, index, correct) => recordMethodPractice(activeMaterial.id, type, index, correct)}/>}
 
         {tab === 'cursos' && route.materialId && !route.workspace && (!route.materialStudyMode || ['flashcards', 'multiple-choice'].includes(route.materialStudyMode)) && <section className="course-study-page"><div className="course-study-context"><div><p className="eyebrow">Dentro de {activeCourse?.name ?? 'tu curso'}</p><h2>Estudia este material</h2></div><button className="secondary" onClick={() => activeCourse && navigate(activeMaterial?.sourceType === 'pdf' ? materialWorkspacePath(activeCourse.id, activeMaterial.id) : coursePath(activeCourse.id))}>{activeMaterial?.sourceType === 'pdf' ? '← Volver al PDF' : '← Ver todos los materiales'}</button></div><div className="study-layout">
-          <aside className="panel material-nav"><div className="section-head compact"><div><p className="eyebrow">Material</p><h3>{activeCourse?.name ?? 'Curso'}</h3></div></div>{activeCourse?.materials.map(material => <button key={material.id} className={`material-nav-item ${activeMaterial?.id === material.id ? 'active' : ''}`} onClick={() => openMaterial(activeCourse.id, material.id)}><span>{material.sourceType === 'pdf' ? 'P' : '≡'}</span><div><strong>{material.title}</strong><small>{material.studyPackMeta?.source === 'nexo-ai' ? '✦ Preparado por Nexo IA' : material.pages?.length ? `${material.pages.length} páginas` : `${material.text.length} caracteres`}</small></div></button>)}<button className="secondary full" onClick={() => setShowMaterialForm(true)}>+ Agregar material</button></aside>
+          <aside className="panel material-nav"><div className="section-head compact"><div><p className="eyebrow">Material</p><h3>{activeCourse?.name ?? 'Curso'}</h3></div></div>{activeCourse?.materials.map(material => <button key={material.id} className={`material-nav-item ${activeMaterial?.id === material.id ? 'active' : ''}`} onClick={() => openMaterial(activeCourse.id, material.id)}><span>{material.sourceType === 'pdf' ? 'P' : '≡'}</span><div><strong>{material.title}</strong><small>{material.studyPackMeta?.source === 'nexo-ai' ? '✦ Preparado por Nexo IA' : material.pages?.length ? `${material.pages.length} páginas` : `${material.text.length} caracteres`}</small></div></button>)}<button className="secondary full" onClick={() => startMaterialUpload(activeCourse?.id)}>+ Agregar material</button></aside>
           <div className="panel study-stage">{pack && activeMaterial ? <>
             <div className="study-heading"><div><p className="eyebrow">Sesión de estudio</p><h2>{activeMaterial.title}</h2>{activeMaterial.sourceName && <small className="source-line">{activeMaterial.sourceType === 'pdf' ? '📄' : '📝'} {activeMaterial.sourceName}</small>}</div><div className="study-heading-actions">{studyMode === 'summary' && <button className="secondary ai-regenerate" disabled={aiGeneratingMaterialId === activeMaterial.id} onClick={regenerateActiveMaterial}>{aiGeneratingMaterialId === activeMaterial.id ? '✦ Preparando…' : '✦ Preparar Study Pack completo'}</button>}{studyMode === 'flashcards' && flashArtifact?.status === 'ready' && <button className="secondary ai-regenerate" onClick={() => generateArtifact('flashcards', true)}>Regenerar tarjetas</button>}{studyMode === 'quiz' && quizArtifact?.status === 'ready' && <button className="secondary ai-regenerate" onClick={() => generateArtifact('multiple_choice', true)}>Regenerar preguntas</button>}<div className="mode-tabs"><button className={studyMode === 'summary' ? 'active' : ''} onClick={() => setStudyMode('summary')}>Resumen</button><button className={studyMode === 'flashcards' ? 'active' : ''} onClick={() => setStudyMode('flashcards')}>Flashcards</button><button className={studyMode === 'quiz' ? 'active' : ''} onClick={() => setStudyMode('quiz')}>Quiz</button><button className={studyMode === 'tutor' ? 'active' : ''} onClick={() => setStudyMode('tutor')}>Tutor</button></div></div></div>
             {aiGeneratingMaterialId === activeMaterial.id && <StudyGenerationBanner material={activeMaterial} />}
@@ -967,9 +1015,25 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
         <NavButton icon="↗" label="Progreso" active={tab === 'progreso'} onClick={() => setTab('progreso')}/>
       </nav>
 
-      {showCourseForm && <Modal title={`Nuevo curso · ${workspaces.selectedWorkspace.name}`} onClose={() => setShowCourseForm(false)}><div className="course-emoji-preview"><span>{courseEmoji}</span><div><strong>Un curso para {workspaces.selectedWorkspace.name}</strong><small>Quedará dentro de este espacio y su avance se medirá aquí.</small></div></div><div className="course-emoji-picker">{['📘','🧠','🧪','🩺','🦷','📐','⚛️','💻','📚','🌎','⚖️','💹','🧬','🔬','🎨','🎯'].map(emoji => <button key={emoji} className={courseEmoji === emoji ? 'active' : ''} onClick={() => setCourseEmoji(emoji)}>{emoji}</button>)}</div><label>Nombre del curso<input autoFocus value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Ej. Histología" onKeyDown={e => e.key === 'Enter' && addCourse()} /></label>{courseError && <div role="alert" className="auth-alert error">{courseError}</div>}<div className="modal-actions"><button className="secondary" onClick={() => setShowCourseForm(false)}>Cancelar</button><button className="primary" disabled={courseBusy || !courseName.trim()} onClick={addCourse}>{courseBusy ? 'Creando…' : 'Crear curso'}</button></div></Modal>}
+      {showGlobalSearch && <GlobalSearch userId={user.id} courses={courses} onClose={() => setShowGlobalSearch(false)} onCourse={id => { setShowGlobalSearch(false); openCourse(id) }} onMaterial={(courseId, materialId, page) => { setShowGlobalSearch(false); openMaterial(courseId, materialId); if (page) setSourceJump({ materialId, page }) }} onUpload={() => { setShowGlobalSearch(false); startMaterialUpload() }} onResolver={() => { setShowGlobalSearch(false); setTab('resolver') }}/>}
+      {showCourseForm && <Modal title={`Nuevo curso · ${workspaces.selectedWorkspace.name}`} onClose={() => { setShowCourseForm(false); setResumeUploadAfterCourse(false) }}><div className="course-emoji-preview"><span>{courseEmoji}</span><div><strong>Un curso para {workspaces.selectedWorkspace.name}</strong><small>Quedará dentro de este espacio y su avance se medirá aquí.</small></div></div><div className="course-emoji-picker">{['📘','🧠','🧪','🩺','🦷','📐','⚛️','💻','📚','🌎','⚖️','💹','🧬','🔬','🎨','🎯'].map(emoji => <button key={emoji} className={courseEmoji === emoji ? 'active' : ''} onClick={() => setCourseEmoji(emoji)}>{emoji}</button>)}</div><label>Nombre del curso<input autoFocus value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Ej. Histología" onKeyDown={e => e.key === 'Enter' && addCourse()} /></label>{courseError && <div role="alert" className="auth-alert error">{courseError}</div>}<div className="modal-actions"><button className="secondary" onClick={() => { setShowCourseForm(false); setResumeUploadAfterCourse(false) }}>Cancelar</button><button className="primary" disabled={courseBusy || !courseName.trim()} onClick={addCourse}>{courseBusy ? 'Creando…' : 'Crear curso'}</button></div></Modal>}
 
-      {showMaterialForm && <Modal title={`Agregar material${activeCourse ? ` · ${activeCourse.name}` : ''}`} onClose={() => { setShowMaterialForm(false); resetMaterialForm() }} wide>{!activeCourse ? <p>Primero crea un curso.</p> : <><div className="upload-box"><input id="file-upload" type="file" accept=".txt,.md,.pdf" onChange={e => importFile(e.target.files?.[0])}/><label htmlFor="file-upload"><span>↑</span><strong>Subir PDF, TXT o MD</strong><small>Un PDF abre su espacio de inmediato. Nexo analiza páginas por lotes; límite de 25 MB por archivo.</small></label></div>{importStatus && <div className={`import-status ${importStatus.startsWith('⚠') ? 'error' : ''}`}>{importStatus}</div>}<label>Título<input value={materialTitle} onChange={e => setMaterialTitle(e.target.value)} placeholder="Ej. Clase 04 — Patología oral" /></label><label>Texto extraído / apuntes<textarea rows={7} value={materialText} onChange={e => { setMaterialText(e.target.value); if (!sourceName) setSourceType('text') }} placeholder="También puedes pegar aquí tus apuntes directamente…" /></label><div className="modal-actions"><button className="secondary" onClick={() => { setShowMaterialForm(false); resetMaterialForm() }}>Cancelar</button><button className="primary" disabled={!materialTitle.trim() || !materialText.trim()} onClick={addMaterial}>Guardar y estudiar</button></div></>}</Modal>}
+      {showMaterialForm && <Modal title="Agregar material" onClose={() => { setShowMaterialForm(false); resetMaterialForm() }} wide>
+        {!uploadCourseId || !courses.some(course => course.id === uploadCourseId) ? <div className="upload-course-step">
+          <p className="eyebrow">Paso 1 · Elige un curso</p><h3>¿Dónde quieres guardarlo?</h3>
+          <div className="upload-course-list">{courses.map(course => <button key={course.id} className="secondary" onClick={() => setUploadCourseId(course.id)}>{course.emoji} {course.name}</button>)}</div>
+          <button className="text-button" onClick={() => { setResumeUploadAfterCourse(true); setShowMaterialForm(false); setShowCourseForm(true) }}>+ Crear nuevo curso</button>
+        </div> : <div className="upload-material-step">
+          <p className="eyebrow">Paso 2 · Material para {courses.find(course => course.id === uploadCourseId)?.name}</p>
+          {!route.courseId && <button className="text-button" onClick={() => { resetMaterialForm(); setUploadCourseId('') }}>← Cambiar curso</button>}
+          <div className="upload-box"><input id="file-upload" type="file" accept=".txt,.md,.pdf" onChange={e => void importFile(e.target.files?.[0])}/><label htmlFor="file-upload"><span>↑</span><strong>{pendingUploadFile ? pendingUploadFile.name : 'Elegir PDF, TXT o MD'}</strong><small>Hasta 25 MB por PDF. Revisa el título antes de guardar.</small></label></div>
+          {!pendingUploadFile && <button className="text-button" onClick={() => setManualDraft(true)}>Escribir apuntes sin archivo</button>}
+          {(pendingUploadFile || manualDraft) && <><label>Título para mostrar<input value={materialTitle} onChange={e => setMaterialTitle(e.target.value)} placeholder="Ej. Clase 04 — Patología oral" /></label>
+            {manualDraft && <label>Apuntes<textarea rows={5} value={materialText} onChange={e => setMaterialText(e.target.value)} placeholder="Escribe o pega tus apuntes…" /></label>}</>}
+          {importStatus && <div className={`import-status ${importStatus.startsWith('⚠') ? 'error' : ''}`}>{importStatus}</div>}
+          <div className="modal-actions"><button className="secondary" onClick={() => { setShowMaterialForm(false); resetMaterialForm() }}>Cancelar</button><button className="primary" disabled={!materialTitle.trim() || (!pendingUploadFile && !materialText.trim()) || (pendingUploadFile !== null && !/\.pdf$/i.test(pendingUploadFile.name) && !materialText.trim())} onClick={() => void addMaterial()}>Guardar y abrir material</button></div>
+        </div>}
+      </Modal>}
       {tab !== 'resolver' && <FeedbackWidget context={pathname} />}
     </div>
   )
@@ -991,7 +1055,7 @@ function SummaryView({ pack, material }: { pack: StudyPack; material: Material }
   const ai = material.studyPackMeta?.source === 'nexo-ai'
   const summaryPayload = material.artifacts?.find(artifact => artifact.type === 'summary' && artifact.status === 'ready')?.payload
   const minimumSummary = summaryPayload && typeof summaryPayload === 'object' && !Array.isArray(summaryPayload) && 'summary' in summaryPayload && typeof summaryPayload.summary === 'string'
-    ? summaryPayload.summary : ''
+    ? quickSummaryFor(material) : ''
   return <div className="study-content"><div className="ai-note"><span>{ai ? '✦' : '⚙'}</span><div><strong>{ai ? 'Preparado por Nexo IA' : 'Paquete local de respaldo'}</strong><p>{ai ? `Generado para un enfoque ${material.studyPackMeta?.focus || 'equilibrado'}${material.studyPackMeta?.sampledPages?.length ? ` · ${material.studyPackMeta.sampledPages.length} páginas muestreadas` : ''}.` : 'Este material sigue disponible aunque la generación con IA todavía no se haya completado.'}</p></div></div>{!ai && minimumSummary && <div className="material-minimum-summary"><strong>Vista rápida del material</strong><p>{minimumSummary}</p></div>}<div className="keyword-row">{pack.keywords.slice(0, 10).map(k => <span key={k}>{k}</span>)}</div><div className="summary-list">{pack.summary.map((item, index) => <div key={index}><span>{String(index + 1).padStart(2, '0')}</span><p>{item.replace(/\.$/, '')}.</p></div>)}</div></div>
 }
 

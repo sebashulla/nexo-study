@@ -1,6 +1,16 @@
-# Nexo Study · Beta V0.9.1
+# Nexo Study · Beta V0.9.2
 
 Nexo Study organiza cursos, materiales y sesiones alrededor de Nexo IA. El Learning Workspace abre un PDF inmediatamente, mantiene el visor separado de su análisis y permite estudiar o preguntar con referencias a páginas. Resolver, Corrector, feedback, Auth y los espacios de estudio siguen disponibles.
+
+## Product Intelligence V0.9.2
+
+- **Subir material** desde Inicio pide un curso; dentro de un curso lo usa como destino. El estudiante elige PDF, TXT, MD o apuntes, revisa un título editable y luego abre el workspace. El nombre original del archivo se conserva.
+- Los temas se derivan de fragmentos académicos tras filtrar URLs, identificadores editoriales, líneas numéricas y referencias frecuentes. Los temas consecutivos similares se agrupan. La Vista rápida muestra una síntesis de hasta 360 caracteres.
+- El inicio del curso muestra el último material activo, recomendaciones por reglas locales, materiales recientes y conceptos registrados con baja confianza. Home prioriza **Hoy** y **Continuar** cuando existe actividad; Progreso separa actividad de dominio.
+- En móvil, Resumen, Temas, Aprender, Practicar y Evaluar se abren como secciones compactas. Los temas individuales despliegan su detalle bajo demanda.
+- La búsqueda global se abre con **Ctrl/Cmd + K** o el botón Buscar. Busca cursos y materiales en metadatos locales y consulta títulos de temas bajo demanda, sin descargar todos los fragmentos. Un resultado de tema abre el workspace en su página.
+
+Las recomendaciones se calculan a partir de actividad, conceptos practicados, sesiones pendientes y estado parcial de PDF; no se generan con una llamada de IA en cada visita. Esta fase no añade tablas ni cambia las migraciones 007/008.
 
 ## Learning Workspace
 
@@ -72,3 +82,5 @@ Copia `.env.example` a `.env.local` para desarrollo. `.env` y `.env.local` está
 - El análisis inicial de un PDF largo cubre 80 páginas. El estudiante puede ampliar la cobertura desde el workspace.
 - El visor PDF es el visor nativo del navegador; su comportamiento exacto al saltar a `#page=N` depende del navegador.
 - Los PDFs anteriores a la optimización pueden conservar texto duplicado en columnas antiguas. La migración 008 no elimina contenido existente.
+- **Guardar respuesta de Resolver en un curso** aún no está implementado. Las imágenes de una respuesta requieren un diseño de almacenamiento privado antes de sincronizarlas; esta fase conserva las conversaciones actuales sin duplicarlas como materiales.
+- La búsqueda de temas consulta títulos y puede omitir una coincidencia que solo aparezca dentro del resumen de un tema. No usa vectores.

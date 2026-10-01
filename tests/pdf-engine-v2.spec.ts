@@ -48,6 +48,7 @@ async function uploadMockPdf(page: Page, kind: 'text' | 'scan' | 'mixed' | 'fail
   await page.getByRole('button', { name: /Agregar material/ }).first().click()
   dialog = page.getByRole('dialog')
   await dialog.locator('input[type="file"]').setInputFiles({ name: 'Irodov-Problems_in_General_Physics.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4\n%%EOF') })
+  await dialog.getByRole('button', { name: 'Guardar y abrir material' }).click()
   await expect(page).toHaveURL(/\/workspace$/)
 }
 

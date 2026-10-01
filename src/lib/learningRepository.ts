@@ -165,6 +165,18 @@ export async function searchRemoteContext(course: Course, question: string, mate
   return { context: context.slice(0, 13500), sources }
 }
 
+export async function searchAcademicTopics(userId: string, query: string) {
+  if (!supabase) return [] as { courseId: string; materialId: string; title: string; page: number }[]
+  const term = query.trim().replace(/[%_,.()]/g, '').slice(0, 80)
+  if (term.length < 2) return []
+  const { data, error } = await supabase.from('material_topics')
+    .select('course_id,material_id,title,page_start').eq('user_id', userId)
+    .ilike('title', `%${term}%`).limit(15)
+  if (error) throw error
+  return (data ?? []).map(row => ({ courseId: row.course_id as string, materialId: row.material_id as string,
+    title: row.title as string, page: row.page_start as number ?? 1 }))
+}
+
 export async function saveCourses(userId: string, courses: Course[]) {
   if (!supabase || !courses.length) return
   const courseRows = courses.map(course => ({ user_id: userId, id: course.id, name: course.name, emoji: course.emoji }))

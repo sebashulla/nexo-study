@@ -2,6 +2,36 @@ import type { Material, MaterialChunk, MaterialTopic } from '../types'
 
 const MAX_CHUNK_CHARS = 2600
 const STOP_WORDS = new Set('a al algo ante bajo con contra de del desde donde el ella en entre es esta este esto ha hay la las lo los más no o para por que se sin sobre su sus un una unas unos y ya'.split(' '))
+const EDITORIAL_WORDS = /(?:https?:\/\/|www\.|\bdoi\b|\bissn\b|\bisbn\b|copyright|©|todos los derechos|rev(?:ista)?\s+med\b|vol(?:umen)?\.?\s*\d+|e-?mail|\breferencias?\b|bibliograf[ií]a)/i
+
+function cleanAcademicLine(value: string) {
+  const line = value.replace(/\[[Pp][áa]gina\s+\d+\]/g, '').replace(/\s+/g, ' ').trim()
+  if (line.length < 24 || EDITORIAL_WORDS.test(line)) return ''
+  const letters = (line.match(/[a-záéíóúüñ]/gi) ?? []).length
+  const digits = (line.match(/\d/g) ?? []).length
+  if (letters < 18 || digits > letters / 2 || /^\d+[.)\s]/.test(line) || /^[-–—\d\s.,:;]+$/.test(line)) return ''
+  return line
+}
+
+function academicSentences(text: string) {
+  return text.split(/(?<=[.!?])\s+|\n+/).map(cleanAcademicLine).filter(Boolean)
+}
+
+function topicTitle(text: string, words: string[], materialTitle: string) {
+  const documentTitle = new Set(terms(materialTitle))
+  const candidate = academicSentences(text).find(line => {
+    const first = line.split(/[:.;]/)[0].trim()
+    return first.length >= 25 && first.length <= 88 &&
+      terms(first).some(word => !documentTitle.has(word)) && !/^(?:introducci[oó]n|resumen|abstract|objetivos?|resultados?|conclusiones?)$/i.test(first)
+  })
+  if (candidate) {
+    const first = candidate.split(/[:.;]/)[0].trim()
+    if (first.length <= 88) return first
+  }
+  const useful = words.filter(word => !documentTitle.has(word)).slice(0, 4)
+  const fallback = useful.length ? useful : words.slice(0, 4)
+  return fallback.length ? fallback.map((word, index) => index ? word : word[0].toUpperCase() + word.slice(1)).join(' · ') : ''
+}
 
 function terms(text: string) {
   return (text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().match(/[a-z0-9]{3,}/g) ?? [])
@@ -37,18 +67,31 @@ export function chunksForMaterial(material: Material): MaterialChunk[] {
 
 export function topicsForMaterial(material: Material, chunks: MaterialChunk[]): MaterialTopic[] {
   if (!chunks.length) return []
-  const groupSize = Math.max(1, Math.ceil(chunks.length / 18))
+  const groupSize = chunks.length <= 2 ? 1 : Math.max(2, Math.ceil(chunks.length / 10))
   const topics: MaterialTopic[] = []
   for (let index = 0; index < chunks.length; index += groupSize) {
     const group = chunks.slice(index, index + groupSize)
     const text = group.map(chunk => chunk.text).join(' ')
-    const firstLine = group[0].text.split(/[.!?]\s/)[0].trim()
-    const title = firstLine.length > 12 && firstLine.length < 88 ? firstLine : `Tema ${topics.length + 1}`
-    topics.push({
-      id: crypto.randomUUID(), materialId: material.id, title, summary: text.slice(0, 280),
+    const clean = academicSentences(text)
+    const termsByFrequency = keywords(clean.join(' '), 10)
+    const title = topicTitle(clean.join(' '), termsByFrequency, material.title)
+    if (!title || !clean.length) continue
+    const summary = clean.slice(0, 2).join(' ').slice(0, 260)
+    const next: MaterialTopic = {
+      id: crypto.randomUUID(), materialId: material.id, title, summary,
       pageStart: group[0].pageStart, pageEnd: group[group.length - 1].pageEnd,
-      keywords: keywords(text),
-    })
+      keywords: termsByFrequency.slice(0, 8),
+    }
+    const previous = topics[topics.length - 1]
+    const previousTerms = previous ? new Set(terms(previous.title)) : new Set<string>()
+    const nextTerms = new Set(terms(title))
+    const common = [...nextTerms].filter(word => previousTerms.has(word) && !STOP_WORDS.has(word))
+    if (previous && (common.length >= 2 || common.some(word => word.length >= 7) &&
+      Math.min(previousTerms.size, nextTerms.size) <= 3)) {
+      previous.pageEnd = next.pageEnd
+      previous.summary = `${previous.summary} ${summary}`.trim().slice(0, 300)
+      previous.keywords = [...new Set([...previous.keywords, ...next.keywords])].slice(0, 8)
+    } else topics.push(next)
   }
   return topics
 }

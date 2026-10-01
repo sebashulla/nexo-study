@@ -6,6 +6,7 @@ import { contextForQuestion } from './lib/learningContext'
 import { searchRemoteContext, signedPdfUrl } from './lib/learningRepository'
 import { renderPdfPages } from './lib/documentEngine'
 import { displayMaterialTitle } from './lib/materialTitles'
+import { quickSummaryFor } from './lib/quickSummary'
 import { ResponseRenderer } from './ResponseRenderer'
 
 type Source = { materialId: string; materialTitle: string; pageStart: number; pageEnd: number }
@@ -56,6 +57,8 @@ export function MaterialWorkspace({ course, material, localPdf, initialPage, onB
   const [chatError, setChatError] = useState('')
   const [visualBusy, setVisualBusy] = useState(false)
   const [visualError, setVisualError] = useState('')
+  const [compactContent, setCompactContent] = useState(() => window.matchMedia('(max-width: 700px)').matches)
+  const [openContentSection, setOpenContentSection] = useState('Practicar')
   const [rangeStart, setRangeStart] = useState(1)
   const [rangeEnd, setRangeEnd] = useState(1)
   const [fullscreen, setFullscreen] = useState(false)
@@ -71,13 +74,18 @@ export function MaterialWorkspace({ course, material, localPdf, initialPage, onB
     Array.from({ length: chunk.pageEnd - chunk.pageStart + 1 }, (_, index) => chunk.pageStart + index))).size
   const canAnalyzeMore = partial && material.documentKind !== 'scan' && Boolean(material.pageCount && availablePages < material.pageCount)
   const title = displayMaterialTitle(material.title)
-  const summaryPayload = material.artifacts?.find(artifact => artifact.type === 'summary' && artifact.status === 'ready')?.payload
-  const summary = summaryPayload && typeof summaryPayload === 'object' && !Array.isArray(summaryPayload) && 'summary' in summaryPayload && typeof summaryPayload.summary === 'string'
-    ? summaryPayload.summary : ''
+  const summary = quickSummaryFor(material)
 
   useEffect(() => {
     if (initialPage && initialPage > 0) setPage(initialPage)
   }, [initialPage])
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 700px)')
+    const update = () => setCompactContent(media.matches)
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
 
   useEffect(() => {
     const onChange = () => setFullscreen(document.fullscreenElement === shellRef.current)
@@ -166,15 +174,19 @@ export function MaterialWorkspace({ course, material, localPdf, initialPage, onB
     setNexoPercent(Math.min(60, Math.max(30, next)))
   }
 
-  const topicButton = (topic: MaterialTopic) => <button key={topic.id} className="material-topic" onClick={() => selectPage(topic.pageStart ?? 1)}>
-    <span>{topic.pageStart ? `Pág. ${topic.pageStart}${topic.pageEnd && topic.pageEnd !== topic.pageStart ? `–${topic.pageEnd}` : ''}` : 'Tema'}</span>
-    <strong>{topic.title}</strong>
-    <small>{topic.summary}</small>
-  </button>
+  const topicButton = (topic: MaterialTopic) => <details key={topic.id} className="material-topic">
+    <summary><strong>{topic.title}</strong><small>{topic.pageStart ? `Pág. ${topic.pageStart}${topic.pageEnd && topic.pageEnd !== topic.pageStart ? `–${topic.pageEnd}` : ''}` : 'Tema'}</small></summary>
+    <p>{topic.summary}</p><button className="text-button" onClick={() => selectPage(topic.pageStart ?? 1)}>Ver página →</button>
+  </details>
+  const sectionOpen = (name: string) => !compactContent || openContentSection === name
+  const onSectionToggle = (name: string, open: boolean) => {
+    if (compactContent && open) setOpenContentSection(name)
+    else if (compactContent && !open && openContentSection === name) setOpenContentSection('')
+  }
 
   return <section className="material-workspace" ref={shellRef}>
     <header className="material-workspace-head">
-      <div><button className="text-button" onClick={onBack}>← {course.name}</button><h2>{title}</h2><p>{material.sourceName || 'Material de estudio'} · {material.pageCount ? `${material.pageCount} ${material.pageCount === 1 ? 'página' : 'páginas'}` : 'Calculando páginas…'}</p></div>
+      <div><button className="text-button" onClick={onBack}>← {course.name}</button><h2>{title}</h2><p>{material.sourceName || 'Material de estudio'} · {material.pageCount ? `${material.pageCount} ${material.pageCount === 1 ? 'página' : 'páginas'}` : 'Calculando páginas…'}{page > 1 ? ` · Página ${page}` : ''}</p></div>
       <div className="material-workspace-head-actions"><span className="source-badge">{material.documentKind === 'scan' ? 'Documento escaneado' : analyzing ? 'Nexo preparando' : partial ? 'Análisis parcial' : analysisStatus === 'failed' ? 'Análisis pendiente' : ready ? 'Nexo listo' : 'Preparación pendiente'}</span><details className="material-layout-menu" ref={layoutMenuRef}><summary>Layout ▾</summary><div role="group" aria-label="Proporción entre documento y Nexo">{([30, 50, 60] as const).map(percent => <button key={percent} className={`secondary ${panelOpen && nexoPercent === percent ? 'active' : ''}`} aria-pressed={panelOpen && nexoPercent === percent} onClick={() => { setNexoPercent(percent); setPanelOpen(true); if (layoutMenuRef.current) layoutMenuRef.current.open = false }}>{100 - percent}/{percent}</button>)}</div></details><button className="secondary" aria-label={fullscreen ? 'Salir de pantalla completa' : 'Pantalla completa'} onClick={() => { if (shellRef.current && document.fullscreenElement !== shellRef.current) void shellRef.current.requestFullscreen?.(); else if (document.fullscreenElement) void document.exitFullscreen?.() }}>⛶</button><button className="secondary panel-toggle" aria-label={panelOpen ? 'Ocultar Nexo' : 'Abrir Nexo'} onClick={() => setPanelOpen(value => !value)}>Nexo ◧</button></div>
     </header>
     {(analyzing || partial || analysisStatus === 'failed' || material.documentKind === 'scan' || !ready) && <div className="material-processing" role="status"><strong>{material.documentKind === 'scan' ? 'Este documento parece estar escaneado.' : analyzing ? `Nexo preparando · ${material.analysisProgress ? `${material.analysisProgress.completed}/${material.analysisProgress.total} páginas seleccionadas de ${material.pageCount ?? '…'}` : 'leyendo metadatos'}` : partial ? `Nexo ha preparado ${availablePages} de ${material.pageCount ?? '…'} páginas` : analysisStatus === 'failed' ? 'No pudimos preparar el análisis.' : 'Preparando tu material'}</strong><ol><li>✓ Documento</li><li>{analyzing && material.processingStage === 'reading' ? '●' : availablePages ? '✓' : '○'} Texto</li><li>{analyzing && material.processingStage === 'indexing' ? '●' : material.topics?.length ? '✓' : '○'} Indexando</li><li>{material.topics?.length ? '✓' : '○'} Temas</li></ol>{(analysisStatus === 'failed' || analysisStatus === 'not_started') && onRetry && <button className="secondary" onClick={onRetry}>Reintentar lectura</button>}{canAnalyzeMore && onAnalyzeMore && <button className="secondary" onClick={onAnalyzeMore}>Analizar más páginas</button>}{material.documentKind === 'scan' && <button className="secondary" onClick={() => { setPanelTab('content'); setMobileTab('nexo'); setPanelOpen(true) }}>Analizar visualmente</button>}</div>}
@@ -189,14 +201,18 @@ export function MaterialWorkspace({ course, material, localPdf, initialPage, onB
           <h3>¿Qué quieres hacer con este material?</h3>
           <p>Nexo conserva el contexto de este documento y prepara cada método cuando lo necesites.</p>
           {!ready && <p role="status">{material.documentKind === 'scan' ? 'Analiza algunas páginas para habilitar los métodos de estudio.' : 'Disponible cuando Nexo termine de analizar este material.'}</p>}
-          {summary && <div className="material-minimum-summary"><strong>Vista rápida del material</strong><p>{summary}</p></div>}
+          <details className="material-content-section" open={sectionOpen('Resumen')} onToggle={event => onSectionToggle('Resumen', event.currentTarget.open)}><summary>Resumen</summary>
+            <div className="material-minimum-summary"><strong>Vista rápida del material</strong><p>{summary || 'La síntesis aparecerá cuando Nexo prepare el contenido.'}</p></div>
+          </details>
           {(material.documentKind === 'scan' || material.documentKind === 'mixed') && material.pageCount && <div className="material-visual-analysis">
             <strong>Analizar visualmente con Nexo</strong><p>Elige la página actual o un rango de hasta cuatro páginas. Solo se enviarán esas imágenes.</p>
             <div><label>Desde <input aria-label="Primera página visual" type="number" min={1} max={material.pageCount} value={rangeStart} onChange={event => setRangeStart(Number(event.target.value))}/></label><label>Hasta <input aria-label="Última página visual" type="number" min={1} max={material.pageCount} value={rangeEnd} onChange={event => setRangeEnd(Number(event.target.value))}/></label></div>
             <button className="secondary" disabled={visualBusy || Math.abs(rangeEnd - rangeStart) > 3 || Math.min(rangeStart, rangeEnd) < 1 || Math.max(rangeStart, rangeEnd) > material.pageCount} onClick={() => void analyzeVisual()}>{visualBusy ? 'Analizando páginas…' : 'Analizar visualmente'}</button>{visualError && <p role="alert">{visualError}</p>}
           </div>}
-          {methodGroups.map(group => <div className="material-method-group" key={group.title}><h4>{group.title}</h4><div className="material-methods">{methods.filter(method => group.modes.includes(method.mode)).map(method => <button key={method.mode} disabled={!ready} onClick={() => onStudy(method.mode)}><strong>{method.title}</strong><span>{method.description}{material.artifacts?.some(artifact => artifact.status === 'ready' && (artifact.type === method.mode || (method.mode === 'multiple-choice' && artifact.type === 'multiple_choice') || (method.mode === 'written' && artifact.type === 'written_questions') || (method.mode === 'fill-blanks' && artifact.type === 'fill_blanks'))) ? ' · Listo en tu biblioteca' : ''}</span></button>)}</div></div>)}
-          <h3>Temas detectados</h3><div className="material-topics">{material.topics?.length ? material.topics.map(topicButton) : <p>Los temas aparecerán cuando Nexo termine de leer el documento.</p>}</div>
+          <details className="material-content-section" open={sectionOpen('Temas')} onToggle={event => onSectionToggle('Temas', event.currentTarget.open)}><summary>Temas detectados{material.topics?.length ? ` · ${material.topics.length}` : ''}</summary>
+            <div className="material-topics">{material.topics?.length ? material.topics.map(topicButton) : <p>Los temas aparecerán cuando Nexo termine de leer el documento.</p>}</div>
+          </details>
+          {methodGroups.map(group => <details className="material-content-section material-method-group" key={group.title} open={sectionOpen(group.title)} onToggle={event => onSectionToggle(group.title, event.currentTarget.open)}><summary>{group.title}</summary><div className="material-methods">{methods.filter(method => group.modes.includes(method.mode)).map(method => <button key={method.mode} disabled={!ready} onClick={() => onStudy(method.mode)}><strong>{method.title}</strong><span>{method.description}{material.artifacts?.some(artifact => artifact.status === 'ready' && (artifact.type === method.mode || (method.mode === 'multiple-choice' && artifact.type === 'multiple_choice') || (method.mode === 'written' && artifact.type === 'written_questions') || (method.mode === 'fill-blanks' && artifact.type === 'fill_blanks'))) ? ' · Listo en tu biblioteca' : ''}</span></button>)}</div></details>)}
         </div> : <div className="material-nexo-chat"><div className="material-chat-turns">{partial && ready && <p role="status">Nexo responderá usando {contextPageCount} {contextPageCount === 1 ? 'página preparada' : 'páginas preparadas'}.</p>}{turns.length ? turns.map((turn, index) => <article key={index}><div className="material-chat-question">{turn.question}</div><div className="material-chat-answer"><ResponseRenderer text={turn.answer}/>{turn.sources.length > 0 && <div className="material-chat-sources">{turn.sources.map((source, sourceIndex) => <button key={sourceIndex} onClick={() => selectPage(source.pageStart)}>{source.materialTitle} · página {source.pageStart}</button>)}</div>}</div></article>) : <p>{ready ? 'Pregunta sobre este material. Nexo buscará fragmentos relevantes y te mostrará las páginas usadas.' : 'Analiza páginas de este documento para comenzar a preguntar a Nexo.'}</p>}{busy && <p role="status">Nexo está revisando el material…</p>}</div><div className="material-chat-composer">{chatError && <p role="alert">{chatError}</p>}<textarea aria-label="Preguntar sobre este material" value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void send() } }} placeholder={ready ? 'Pregunta algo sobre este documento…' : 'Prepara algunas páginas para conversar con Nexo…'} disabled={!ready} rows={3}/><button className="primary" disabled={!question.trim() || busy || !ready} onClick={() => void send()}>Preguntar a Nexo</button></div></div>}
       </aside></>}
     </div>
