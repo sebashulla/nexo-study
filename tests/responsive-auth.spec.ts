@@ -52,6 +52,36 @@ test('sidebar can collapse on desktop and opens as a drawer on mobile', async ({
   await noOverflow(page)
 })
 
+test('mobile drawer keeps navigation in full-width rows with readable labels', async ({ page }, info) => {
+  await login(page)
+  for (const collapsed of [false, true]) {
+    await page.evaluate(value => localStorage.setItem('nexo-study-sidebar-collapsed', String(value)), collapsed)
+    await page.reload()
+    for (const width of [320, 393, 430, 700]) {
+      await page.setViewportSize({ width, height: 852 })
+      await page.getByRole('button', { name: 'Abrir navegación' }).click()
+      const drawer = page.getByRole('dialog', { name: 'Barra lateral principal' })
+      await expect(drawer.getByRole('button', { name: 'Ir al inicio' })).toBeVisible()
+      const buttons = drawer.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button')
+      await expect(buttons).toHaveCount(5)
+      let previousBottom = 0
+      for (const button of await buttons.all()) {
+        const box = (await button.boundingBox())!
+        expect(box.width).toBeGreaterThan(200)
+        expect(box.y).toBeGreaterThanOrEqual(previousBottom)
+        previousBottom = box.y + box.height
+        const label = button.locator('.nav-label')
+        await expect(label).toBeVisible()
+        expect((await label.boundingBox())!.height).toBeLessThan(28)
+      }
+      await noOverflow(page)
+      if (width === 393 && !collapsed) await page.screenshot({ path: info.outputPath('mobile-drawer-393.png'), fullPage: true })
+      await drawer.getByRole('button', { name: 'Cerrar navegación' }).click()
+      await expect(drawer).toBeHidden()
+    }
+  }
+})
+
 test('login: validation, password visibility, error, session persistence and sign out', async ({ page }, info) => {
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'Qué bueno verte.' })).toBeVisible()

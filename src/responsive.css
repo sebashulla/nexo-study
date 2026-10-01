@@ -664,11 +664,11 @@ h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
   .mobile-sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 101; width: 100%; border: 0; background: #070a15b8; }
   .app-shell.mobile-sidebar-open .sidebar { display: flex; position: fixed; top: 0; bottom: 0; left: 0; z-index: 102; width: min(300px, calc(100vw - 38px)); height: 100dvh; min-height: 0; padding: max(22px, env(safe-area-inset-top)) 18px max(22px, env(safe-area-inset-bottom)); overflow-y: auto; border-right: 1px solid var(--border); }
   .mobile-sidebar-open .sidebar-top, .mobile-sidebar-open.sidebar-collapsed .sidebar-top { flex-direction: row; align-items: flex-start; gap: 8px; margin-bottom: 0; }
-  .mobile-sidebar-open .sidebar-top .brand { padding-bottom: 28px; }
+  .mobile-sidebar-open .sidebar-top .brand { display: flex; justify-content: flex-start; padding-bottom: 28px; }
   .mobile-sidebar-open .sidebar .brand-wordmark-image, .mobile-sidebar-open .sidebar .nav-label { display: block; }
-  .mobile-sidebar-open .sidebar nav { display: grid; overflow: visible; }
+  .mobile-sidebar-open .sidebar nav { display: grid; grid-template-columns: minmax(0, 1fr); overflow: visible; }
   .mobile-sidebar-open .sidebar .nav-button, .mobile-sidebar-open.sidebar-collapsed .sidebar .nav-button { justify-content: flex-start; padding: 12px 13px; }
-  .mobile-sidebar-open .sidebar .nav-label { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+  .mobile-sidebar-open .sidebar .nav-label { min-width: 0; white-space: nowrap; overflow-wrap: normal; }
   .mobile-sidebar-open .sidebar-mobile-close { display: grid; }
   .mobile-sidebar-open .sidebar-collapse-toggle { display: none; }
   .mobile-sidebar-open .sidebar-profile, .mobile-sidebar-open.sidebar-collapsed .sidebar-profile { display: flex; justify-content: flex-start; }
