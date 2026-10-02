@@ -79,7 +79,7 @@ test('global search opens a topic in its material and page', async ({ page }) =>
     }],
   }])), user.id)
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Buscar en Nexo Study' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Mi cuenta' })).toBeVisible()
   await page.keyboard.press('Control+k')
   const dialog = page.getByRole('dialog', { name: 'Buscar en Nexo Study' })
   await dialog.getByRole('textbox', { name: 'Buscar en Nexo Study' }).fill('necrosis')

@@ -11,6 +11,7 @@ export interface SolvePayload {
   context?: string
   courseId?: string
   materialId?: string
+  page?: number
   artifactType?: string
   images?: ImageAttachment[]
 }

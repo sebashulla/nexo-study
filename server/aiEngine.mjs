@@ -105,7 +105,7 @@ function mapUpstreamError(status, internalMessage) {
 }
 
 export async function callNexoEngine(payload) {
-  if (payload.task === 'artifact' && !['flashcards', 'multiple_choice', 'written_questions', 'fill_blanks', 'notes'].includes(payload.artifactType)) {
+  if (payload.task === 'artifact' && !['summary', 'flashcards', 'multiple_choice', 'written_questions', 'fill_blanks', 'notes'].includes(payload.artifactType)) {
     const error = new Error('Unsupported artifact type')
     error.status = 400
     error.publicMessage = 'Esta actividad de estudio todavía no está disponible.'

@@ -59,6 +59,7 @@ test('a 402 page PDF opens immediately and analyzes a bounded first pass', async
   await expect(page.locator('.material-document iframe')).toBeVisible()
   await expect(page.locator('.material-processing')).toContainText('80 de 402 páginas')
   await page.getByRole('button', { name: 'Analizar más páginas' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Siguientes 80' }).click()
   await expect(page.locator('.material-processing')).toContainText('160 de 402 páginas')
 })
 
@@ -78,13 +79,31 @@ test('a scanned PDF remains viewable and permits a selected visual page', async 
   await expect(page.locator('.material-chat-answer')).toContainText('introducción a la célula')
   expect(images).toBe(1)
   await page.locator('.material-nexo-head').getByRole('button', { name: 'Contenido' }).click()
+  const practice = page.locator('.material-method-group').filter({ has: page.locator('summary', { hasText: 'Practicar' }) })
+  if (!(await practice.getAttribute('open') === '')) await practice.locator('summary').click()
   await expect(page.getByRole('button', { name: /Flashcards/ }).last()).toBeEnabled()
+})
+
+test('a 100 page textual PDF finishes only after the student prepares the remaining pages', async ({ page }) => {
+  await uploadMockPdf(page, 'text', 100)
+  await expect(page.locator('.material-processing')).toContainText('80 de 100 páginas')
+  await page.getByRole('button', { name: 'Analizar más páginas' }).click()
+  const dialog = page.getByRole('dialog', { name: 'Preparar más páginas' })
+  await dialog.getByLabel('Inicio del rango').fill('90')
+  await dialog.getByLabel('Final del rango').fill('81')
+  await dialog.getByRole('button', { name: 'Preparar rango' }).click()
+  await expect(dialog.getByRole('alert')).toContainText('inicio menor o igual')
+  await dialog.getByRole('button', { name: 'Todo lo pendiente' }).click()
+  await expect(page.locator('.material-workspace-head')).toContainText('Nexo listo')
+  await expect(page.locator('.material-processing')).toHaveCount(0)
 })
 
 test('mixed PDF keeps partial analysis and usable methods', async ({ page }) => {
   await uploadMockPdf(page, 'mixed', 4)
   await expect(page.locator('.material-processing')).toContainText('4 de 4 páginas')
   if (page.viewportSize()!.width <= 700) await page.getByRole('tab', { name: 'Nexo IA' }).click()
+  const practice = page.locator('.material-method-group').filter({ has: page.locator('summary', { hasText: 'Practicar' }) })
+  if (!(await practice.getAttribute('open') === '')) await practice.locator('summary').click()
   await expect(page.getByRole('button', { name: /Flashcards/ }).last()).toBeEnabled()
   await expect(page.locator('.material-visual-analysis')).toBeVisible()
 })
@@ -101,7 +120,7 @@ test('failed text extraction preserves physical page count and can retry', async
 test('workspace, mobile tabs and navigation fit target viewport sizes', async ({ page }) => {
   await uploadMockPdf(page, 'text', 1)
   await expect(page.locator('.material-workspace-head')).toContainText('1 página')
-  for (const [width, height] of [[393, 852], [430, 932], [768, 1024], [1440, 900]]) {
+  for (const [width, height] of [[393, 852], [430, 932], [768, 1024], [1440, 900], [1920, 1080]]) {
     await page.setViewportSize({ width, height })
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
     if (width <= 430) {

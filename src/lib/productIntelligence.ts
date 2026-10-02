@@ -40,3 +40,31 @@ export function courseRecommendations(course: Course, activity: StudyActivity, m
   if (recent && !result.length) result.push({ id: `continue:${recent.id}`, text: `Retoma ${recent.title}.`, action: 'continue', materialId: recent.id })
   return result.slice(0, 3)
 }
+
+export type TodayAction = CourseRecommendation & { courseId: string }
+
+export function todayActions(courses: Course[], activity: StudyActivity, memory: LearningMemory, sessions: StudySession[]): TodayAction[] {
+  const actions: TodayAction[] = []
+  const ids = new Set(courses.map(course => course.id))
+  const unfinished = sessions.filter(session => ids.has(session.courseId) && session.status !== 'completed').sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+  if (unfinished) actions.push({ id: `session:${unfinished.id}`, courseId: unfinished.courseId, action: 'session', text: 'Continúa tu sesión pendiente.' })
+  for (const course of courses) {
+    const weak = weakConceptsFor(course, memory)
+    if (weak.length) actions.push({ id: `weak:${course.id}`, courseId: course.id, materialId: weak[0].materialId, action: 'review', text: `Repasa ${weak.length} conceptos por reforzar en ${course.name}.` })
+  }
+  for (const course of courses) {
+    const errors = course.materials.map(material => ({ material, count: [...Object.values(activity[material.id]?.answers ?? {}), ...Object.values(activity[material.id]?.practiceAttempts ?? {})].filter(value => value === false).length }))
+      .filter(item => item.count > 0).sort((a, b) => b.count - a.count)[0]
+    if (errors && !actions.some(item => item.materialId === errors.material.id)) actions.push({ id: `errors:${errors.material.id}`, courseId: course.id, materialId: errors.material.id, action: 'practice', text: `Vuelve a practicar ${errors.material.title}: ${errors.count} respuestas por revisar.` })
+  }
+  for (const course of courses) {
+    const material = course.materials.find(item => activity[item.id]?.summaryViewed && !Object.keys(activity[item.id]?.answers ?? {}).length && !Object.keys(activity[item.id]?.practiceAttempts ?? {}).length)
+    if (material && !actions.some(item => item.materialId === material.id)) actions.push({ id: `practice:${material.id}`, courseId: course.id, materialId: material.id, action: 'practice', text: `Practica ${material.title}; ya abriste su contenido.` })
+  }
+  if (!actions.length) {
+    const recent = courses.flatMap(course => course.materials.filter(material => activity[material.id]?.lastStudiedAt).map(material => ({ course, material })))
+      .sort((a, b) => (activity[b.material.id]?.lastStudiedAt ?? '').localeCompare(activity[a.material.id]?.lastStudiedAt ?? ''))[0]
+    if (recent) actions.push({ id: `continue:${recent.material.id}`, courseId: recent.course.id, materialId: recent.material.id, action: 'continue', text: `Continúa ${recent.material.title}.` })
+  }
+  return actions.slice(0, 3)
+}

@@ -136,10 +136,12 @@ test('course study and main routes fit the viewport with one workspace explorer'
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await login(page)
+  await expect(page.locator('.app-loading')).toHaveCount(0)
   await page.screenshot({ path: info.outputPath('home.png'), fullPage: true })
   for (const route of ['/courses', '/courses/course-bio/materials/mat-cell', '/resolver', '/corrector', '/progress']) {
     await page.goto(route)
     await expect(page.getByRole('button', { name: 'Mi cuenta' })).toBeVisible()
+    await expect(page.locator('.app-loading')).toHaveCount(0)
     await noOverflow(page)
     await page.screenshot({ path: info.outputPath(`${route.slice(1).replaceAll('/', '-')}.png`), fullPage: true })
   }
@@ -201,6 +203,8 @@ test('create a course and material, study it, and use accessible scrollable dial
   await expect(page.getByRole('heading', { name: 'Estructura y funciones de la célula' }).first()).toBeVisible()
   await noOverflow(page)
   if (page.viewportSize()!.width <= 700) await page.getByRole('tab', { name: 'Nexo IA' }).click()
+  const practice = page.locator('.material-method-group').filter({ has: page.locator('summary', { hasText: 'Practicar' }) })
+  if (!(await practice.getAttribute('open') === '')) await practice.locator('summary').click()
   await page.locator('.material-methods button').filter({ hasText: 'Flashcards' }).click()
   await expect(page.locator('.flashcard')).toBeVisible()
   await page.locator('.flashcard').click()

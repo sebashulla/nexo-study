@@ -56,19 +56,29 @@ async function login(page: Page) {
   await expect(page.getByRole('button', { name: /Cambiar espacio de estudio/ })).toBeVisible()
 }
 
-async function switchTo(page: Page, name: string) {
+async function openWorkspace(page: Page) {
   const trigger = page.getByRole('button', { name: /Cambiar espacio de estudio/ })
-  if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
+  if (page.viewportSize()!.width > 700) {
+    await expect(trigger).toBeVisible()
+    if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
+    return
+  }
+  await page.getByRole('button', { name: 'Abrir navegación' }).click()
+  await page.getByRole('dialog', { name: 'Barra lateral principal' }).getByRole('button', { name: /^Espacio ·/ }).click()
+}
+
+async function switchTo(page: Page, name: string) {
+  await openWorkspace(page)
   await page.getByRole('group', { name: 'Espacios de estudio' }).getByRole('button', { name: new RegExp(name) }).click()
   await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
 }
 
 async function createWorkspace(page: Page, name: string) {
-  await page.getByRole('button', { name: /Cambiar espacio de estudio/ }).click()
+  await openWorkspace(page)
   await page.getByRole('button', { name: 'Nuevo espacio' }).click()
   await page.getByRole('textbox', { name: 'Nombre del espacio' }).fill(name)
   await page.getByRole('button', { name: 'Crear espacio', exact: true }).click()
-  await expect(page.getByRole('button', { name: `Cambiar espacio de estudio. Actual: ${name}` })).toBeVisible()
+  await expect(page.locator('.workspace-edge-trigger')).toHaveAttribute('aria-label', `Cambiar espacio de estudio. Actual: ${name}`)
   await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
 }
 

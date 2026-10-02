@@ -1,4 +1,4 @@
-import type { Course, Material, MaterialChunk, MaterialTopic, StudyArtifact, StudySession, StudySessionEvent } from '../types'
+import type { Course, Material, MaterialChunk, MaterialTopic, SavedSolution, SolutionAttachment, SolutionDraft, StudyArtifact, StudySession, StudySessionEvent } from '../types'
 import type { StudyActivity } from './studyProgress'
 import type { LearningMemory } from './learningState'
 import { supabase } from './supabase'
@@ -76,20 +76,35 @@ export async function synchronizeCourses(userId: string, local: Course[]): Promi
     }
     await saveCourses(userId, [...pending.values()])
   }
-  return { courses, activity: {}, memory: {}, sessions: [] }
+  // Hydrate before App enables writes: a slow read must never allow an older
+  // browser cache to overwrite progress from another device. Signals are small;
+  // document bodies, chunks, artifacts and solutions remain lazy loaded.
+  const signals = await loadStudySignals(userId, courses.map(course => course.id))
+  return { courses, ...signals }
 }
 
 export async function loadCourseDetails(userId: string, courseId: string) {
   if (!supabase) throw new Error('Nexo no está conectado con tu cuenta.')
-  const [materialsResult, progressResult, learningResult, sessionResult] = await Promise.all([
+  const [materialsResult, signals] = await Promise.all([
     supabase.from('materials').select('id,course_id,title,content,source_type,source_name,pages,page_count,metadata,document_kind,analysis_status,analyzed_pages,storage_path,processing_status,study_pack,study_pack_meta,created_at').eq('user_id', userId).eq('course_id', courseId),
-    supabase.from('study_progress').select('material_id,activity').eq('user_id', userId).eq('course_id', courseId),
-    supabase.from('learning_state').select('material_id,concept_key,concept_label,status,confidence,attempts,correct_attempts,updated_at').eq('user_id', userId).eq('course_id', courseId),
-    supabase.from('study_sessions').select('id,course_id,objective,duration_minutes,status,plan,results,created_at,completed_at').eq('user_id', userId).eq('course_id', courseId),
+    loadStudySignals(userId, [courseId]),
   ])
-  const error = materialsResult.error || progressResult.error || learningResult.error || sessionResult.error
-  if (error) throw error
+  if (materialsResult.error) throw materialsResult.error
   const materials = ((materialsResult.data ?? []) as MaterialRow[]).map(mapMaterial)
+  return { materials, ...signals }
+}
+
+// Home/Progress need academic signals, without loading material bodies or chunks.
+export async function loadStudySignals(userId: string, courseIds: string[]) {
+  if (!supabase) throw new Error('Nexo no está conectado con tu cuenta.')
+  if (!courseIds.length) return { activity: {}, memory: {}, sessions: [] }
+  const [progressResult, learningResult, sessionResult] = await Promise.all([
+    supabase.from('study_progress').select('material_id,activity').eq('user_id', userId).in('course_id', courseIds),
+    supabase.from('learning_state').select('material_id,concept_key,concept_label,status,confidence,attempts,correct_attempts,updated_at').eq('user_id', userId).in('course_id', courseIds),
+    supabase.from('study_sessions').select('id,course_id,objective,duration_minutes,status,plan,results,created_at,completed_at').eq('user_id', userId).in('course_id', courseIds),
+  ])
+  const error = progressResult.error || learningResult.error || sessionResult.error
+  if (error) throw error
   const activity: StudyActivity = Object.fromEntries((progressResult.data ?? [])
     .filter(row => row.activity && typeof row.activity === 'object' && !Array.isArray(row.activity))
     .map(row => [row.material_id, row.activity]))
@@ -104,7 +119,7 @@ export async function loadCourseDetails(userId: string, courseId: string) {
     status: row.status, plan: Array.isArray(row.plan) ? row.plan : [], results: row.results ?? {},
     createdAt: row.created_at, completedAt: row.completed_at ?? undefined,
   }))
-  return { materials, activity, memory, sessions }
+  return { activity, memory, sessions }
 }
 
 export async function loadMaterialContext(userId: string, materialId: string) {
@@ -287,4 +302,124 @@ export async function signedPdfUrl(path: string) {
   const { data, error } = await supabase.storage.from('study-pdfs').createSignedUrl(path, 60 * 10)
   if (error || !data?.signedUrl) throw error || new Error('No pudimos abrir el PDF.')
   return data.signedUrl
+}
+
+function mapSolution(row: Record<string, unknown>): SavedSolution {
+  return { id: String(row.id), userId: String(row.user_id), courseId: String(row.course_id),
+    question: String(row.question), answer: String(row.answer), category: String(row.category),
+    source: 'resolver', sourceKey: String(row.source_key), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
+    attachments: Array.isArray(row.attachments) ? row.attachments as SolutionAttachment[] : [] }
+}
+
+export async function loadCourseSolutions(userId: string, courseId: string) {
+  if (!supabase) throw new Error('Nexo no está conectado con tu cuenta.')
+  const { data, error } = await supabase.from('saved_solutions').select('*')
+    .eq('user_id', userId).eq('course_id', courseId).eq('status', 'ready').order('created_at', { ascending: false })
+  if (error) throw error
+  return (data ?? []).map(mapSolution)
+}
+
+export async function loadSavedSolution(userId: string, solutionId: string) {
+  if (!supabase) throw new Error('Nexo no está conectado con tu cuenta.')
+  const { data, error } = await supabase.from('saved_solutions').select('*')
+    .eq('user_id', userId).eq('id', solutionId).eq('status', 'ready').single()
+  if (error) throw error
+  return mapSolution(data)
+}
+
+export async function saveSolution(userId: string, courseId: string, draft: SolutionDraft): Promise<SavedSolution> {
+  if (!supabase) throw new Error('Nexo no está conectado con tu cuenta.')
+  if (draft.expectedImages !== draft.images.length) throw new Error('Las imágenes de esta conversación ya no están disponibles. Vuelve a adjuntarlas en Resolver antes de guardar.')
+  if (!draft.question.trim() || !draft.answer.trim() || draft.images.length > 4) throw new Error('La solución está incompleta.')
+  const lookup = await supabase.from('saved_solutions').select('*').eq('user_id', userId)
+    .eq('course_id', courseId).eq('source_key', draft.sourceKey).maybeSingle()
+  if (lookup.error) throw lookup.error
+  if (lookup.data?.status === 'ready') return mapSolution(lookup.data)
+  if (lookup.data) {
+    if (Date.now() - Date.parse(lookup.data.created_at) < 10 * 60 * 1000) throw new Error('Hay un guardado en curso o incompleto de esta respuesta. Reintenta en 10 minutos para recuperar los adjuntos pendientes.')
+    const prefix = `${userId}/${courseId}/solutions/${lookup.data.id}`
+    const listed = await supabase.storage.from('solution-images').list(prefix, { limit: 10 })
+    if (listed.error) throw listed.error
+    const paths = (listed.data ?? []).map(file => `${prefix}/${file.name}`)
+    if (paths.length) {
+      const removed = await supabase.storage.from('solution-images').remove(paths)
+      if (removed.error) throw removed.error
+    }
+    const removed = await supabase.from('saved_solutions').delete().eq('user_id', userId).eq('id', lookup.data.id).eq('status', 'saving')
+    if (removed.error) throw removed.error
+  }
+  const id = crypto.randomUUID()
+  const now = new Date().toISOString()
+  const row = { id, user_id: userId, course_id: courseId, question: draft.question, answer: draft.answer,
+    category: draft.category, source: 'resolver', source_key: draft.sourceKey, attachments: [], status: 'saving', created_at: now, updated_at: now }
+  const inserted = await supabase.from('saved_solutions').insert(row)
+  if (inserted.error) throw inserted.error
+  const uploaded: string[] = []
+  try {
+    const attachments: SolutionAttachment[] = []
+    for (const [index, image] of draft.images.entries()) {
+      if (!image.dataUrl.startsWith(`data:${image.mimeType};base64,`) || !['image/png', 'image/jpeg', 'image/webp'].includes(image.mimeType)) throw new Error('Una imagen tiene un formato inválido.')
+      const bytes = Uint8Array.from(atob(image.dataUrl.split(',')[1]), character => character.charCodeAt(0))
+      if (!bytes.length || bytes.length > 3145728) throw new Error('Una imagen supera el límite de 3 MB.')
+      const extension = image.mimeType === 'image/jpeg' ? 'jpg' : image.mimeType.split('/')[1]
+      const storagePath = `${userId}/${courseId}/solutions/${id}/${index + 1}.${extension}`
+      const { error } = await supabase.storage.from('solution-images').upload(storagePath, new Blob([bytes], { type: image.mimeType }), { contentType: image.mimeType, upsert: false })
+      if (error) throw error
+      uploaded.push(storagePath)
+      attachments.push({ storagePath, mimeType: image.mimeType as SolutionAttachment['mimeType'], name: image.name.slice(0, 240), bytes: bytes.length })
+    }
+    const { data, error } = await supabase.from('saved_solutions').update({ attachments, status: 'ready' })
+      .eq('user_id', userId).eq('id', id).select('*').single()
+    if (error) throw error
+    return mapSolution(data)
+  } catch (error) {
+    // Remove files before the row, so its owner policy remains valid throughout cleanup.
+    // An upload can reach Storage even if its HTTP response is lost. List the prefix too.
+    const prefix = `${userId}/${courseId}/solutions/${id}`
+    const listed = await supabase.storage.from('solution-images').list(prefix, { limit: 10 })
+    if (listed.error) throw new Error('El guardado falló y no pudimos comprobar sus adjuntos. Conservamos el registro pendiente para reintentar la limpieza en 10 minutos.')
+    const paths = Array.from(new Set([...uploaded, ...(listed.data ?? []).map(file => `${prefix}/${file.name}`)]))
+    const removal = paths.length ? await supabase.storage.from('solution-images').remove(paths) : { error: null }
+    if (!removal.error) {
+      const rollback = await supabase.from('saved_solutions').delete().eq('user_id', userId).eq('id', id)
+      if (rollback.error) throw new Error('El guardado falló y quedó un registro pendiente. Revisa tu conexión antes de reintentar.')
+    } else throw new Error('El guardado falló y quedaron adjuntos pendientes de limpieza. Revisa tu conexión antes de reintentar.')
+    throw error
+  }
+}
+
+export async function signedSolutionImage(path: string) {
+  if (!supabase) throw new Error('Nexo no está conectado con tu cuenta.')
+  const { data, error } = await supabase.storage.from('solution-images').createSignedUrl(path, 60 * 10)
+  if (error || !data?.signedUrl) throw error || new Error('No pudimos abrir esta imagen.')
+  return data.signedUrl
+}
+
+export async function deleteSolution(userId: string, solution: SavedSolution) {
+  if (!supabase) throw new Error('Nexo no está conectado con tu cuenta.')
+  if (solution.attachments.length) {
+    const { error } = await supabase.storage.from('solution-images').remove(solution.attachments.map(image => image.storagePath))
+    if (error) throw error
+  }
+  const { error } = await supabase.from('saved_solutions').delete().eq('user_id', userId).eq('id', solution.id)
+  if (error) throw error
+}
+
+export async function searchSavedSolutions(userId: string, query: string) {
+  if (!supabase || query.trim().length < 2) return []
+  const term = query.trim().replace(/[%_,.()]/g, '').slice(0, 80)
+  const { data, error } = await supabase.from('saved_solutions').select('id,course_id,question,category')
+    .eq('user_id', userId).eq('status', 'ready').ilike('question', `%${term}%`).limit(15)
+  if (error) throw error
+  return (data ?? []).map(row => ({ id: String(row.id), courseId: String(row.course_id), question: String(row.question) }))
+}
+
+export async function loadPageText(userId: string, material: Material, page: number) {
+  const local = material.pages?.find(item => item.page === page)?.text || material.chunks?.filter(chunk => chunk.pageStart === page && chunk.pageEnd === page).map(chunk => chunk.text).join('\n')
+  if (local) return local.slice(0, 15000)
+  if (!supabase) return ''
+  const { data, error } = await supabase.from('material_chunks').select('content').eq('user_id', userId)
+    .eq('material_id', material.id).eq('page_start', page).eq('page_end', page).limit(8)
+  if (error) throw error
+  return (data ?? []).map(row => String(row.content)).join('\n').slice(0, 15000)
 }

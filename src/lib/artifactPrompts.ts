@@ -1,6 +1,7 @@
-import type { Flashcard, Material, QuizQuestion, StudyArtifactType } from '../types'
+import type { Flashcard, Material, QuizQuestion, StudyArtifact, StudyArtifactType } from '../types'
 import { callAI } from './aiClient'
 import { chunksForMaterial } from './learningContext'
+export { artifactPage } from './artifactScope'
 
 type JsonRecord = Record<string, unknown>
 
@@ -69,21 +70,27 @@ function sampledContext(material: Material) {
   return chosen.map(chunk => `[Página ${chunk.pageStart}${chunk.pageEnd !== chunk.pageStart ? `–${chunk.pageEnd}` : ''}] ${chunk.text}`).join('\n\n').slice(0, 15000)
 }
 
-export async function generateArtifactWithAI(courseId: string, courseName: string, material: Material, type: Exclude<StudyArtifactType, 'summary' | 'exam'>): Promise<unknown> {
+export async function generateArtifactWithAI(courseId: string, courseName: string, material: Material, type: Exclude<StudyArtifactType, 'exam'>, sourcePage?: number): Promise<unknown> {
   const context = sampledContext(material)
+  const instruction = type === 'summary' ? 'Devuelve JSON {"summary":"síntesis breve de hasta 500 caracteres"}. Explica la idea central sin copiar el texto bruto.' : promptByType[type]
   const raw = await callAI({ task: 'artifact', artifactType: type, question:
-    `Curso: ${courseName}. Material: ${material.title}.\nGenera únicamente el artefacto solicitado. Usa solo el texto, conserva las páginas y no inventes información.\n${promptByType[type]}\n\nMATERIAL:\n${context}`,
-    category: courseName, courseId, materialId: material.id, mode: 'standard', deep: false })
+    `Curso: ${courseName}. Material: ${material.title}.\nGenera únicamente el artefacto solicitado. Usa solo el texto, conserva las páginas y no inventes información.\n${instruction}${sourcePage ? `\nUsa exclusivamente la página ${sourcePage}. ${type === 'flashcards' ? 'Crea entre 3 y 5 tarjetas.' : type === 'multiple_choice' ? 'Crea 5 preguntas.' : ''}` : ''}\n\nMATERIAL:\n${context}`,
+    category: courseName, courseId, materialId: material.id, page: sourcePage, mode: 'standard', deep: false })
   const parsed = parseJson(raw)
+  if (type === 'summary') {
+    const summary = text(parsed.summary, 500)
+    if (!summary) throw new Error('Nexo no pudo resumir esta página.')
+    return { summary }
+  }
   if (type === 'flashcards') {
     const cards = artifactFlashcards(parsed)
-    if (cards.length < 4) throw new Error('Nexo preparó muy pocas tarjetas. Inténtalo otra vez.')
-    return { cards }
+    if (cards.length < (sourcePage ? 3 : 4)) throw new Error('Nexo preparó muy pocas tarjetas. Inténtalo otra vez.')
+    return { cards: sourcePage ? cards.slice(0, 5).map(card => ({ ...card, sourcePage })) : cards }
   }
   if (type === 'multiple_choice') {
     const questions = artifactQuestions(parsed)
-    if (questions.length < 4) throw new Error('Nexo preparó muy pocas preguntas. Inténtalo otra vez.')
-    return { questions }
+    if (questions.length < (sourcePage ? 5 : 4)) throw new Error('Nexo preparó muy pocas preguntas. Inténtalo otra vez.')
+    return { questions: sourcePage ? questions.slice(0, 5).map(question => ({ ...question, sourcePage })) : questions }
   }
   if (type === 'written_questions') {
     const questions = Array.isArray(parsed.questions) ? parsed.questions.map(item => record(item)).filter((item): item is JsonRecord => Boolean(item))

@@ -1,4 +1,5 @@
 import type { Material } from '../types'
+import { artifactPage } from './artifactScope'
 
 const MAX_SUMMARY_CHARS = 360
 
@@ -17,7 +18,7 @@ export function quickSummaryFor(material: Material): string {
     const detail = topics.map(topic => topic.summary).find(summary => summary && summary.length > 35) ?? ''
     return shorten(`${lead} ${detail}`)
   }
-  const payload = material.artifacts?.find(artifact => artifact.type === 'summary' && artifact.status === 'ready')?.payload
+  const payload = material.artifacts?.find(artifact => artifact.type === 'summary' && artifact.status === 'ready' && !artifactPage(artifact))?.payload
   if (payload && typeof payload === 'object' && !Array.isArray(payload) && 'summary' in payload && typeof payload.summary === 'string')
     return shorten(payload.summary)
   return ''

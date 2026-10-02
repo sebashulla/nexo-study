@@ -25,9 +25,12 @@ export function applyRecall(memory: LearningMemory, materialId: string, label: s
 
 export function masterySummary(memory: LearningMemory, materialIds: string[]) {
   const ids = new Set(materialIds)
-  const concepts = Object.values(memory).filter(item => ids.has(item.materialId))
+  const concepts = Object.values(memory).filter(item => ids.has(item.materialId) && item.attempts > 0)
+  const attempts = concepts.reduce((sum, item) => sum + item.attempts, 0)
   return {
     concepts: concepts.length,
+    attempts,
+    sufficient: attempts >= 3,
     mastered: concepts.filter(item => item.status === 'mastered').length,
     weak: concepts.filter(item => item.status === 'learning' && item.attempts > 0).sort((a, b) => a.confidence - b.confidence),
     percent: concepts.length ? Math.round(concepts.reduce((sum, item) => sum + item.confidence, 0) / concepts.length * 100) : 0,

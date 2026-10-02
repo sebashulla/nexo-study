@@ -1,9 +1,11 @@
 import type { Course, Material, StudyPack } from '../types'
 import { generateStudyPack } from './studyEngine'
+import { artifactPage } from './artifactScope'
 
 export type MaterialActivity = {
   summaryViewed?: boolean
   flashcardsSeen?: number[]
+  artifactCardsSeen?: string[]
   answers?: Record<string, boolean>
   practiceAttempts?: Record<string, boolean>
   sessionSteps?: string[]
@@ -53,6 +55,16 @@ export function materialProgress(pack: StudyPack | undefined, activity: Material
     const completed = Object.keys(activity.practiceAttempts ?? {}).filter(key => key.startsWith(`${type}:`)).length
     parts.push(Math.min(1, completed / items.length))
   }
+  for (const artifact of material?.artifacts ?? []) {
+    if (artifact.status !== 'ready' || !artifactPage(artifact) || !artifact.payload || typeof artifact.payload !== 'object' || Array.isArray(artifact.payload)) continue
+    const payload = artifact.payload as Record<string, unknown>
+    const items = artifact.type === 'flashcards' ? payload.cards : artifact.type === 'multiple_choice' ? payload.questions : null
+    if (!Array.isArray(items) || !items.length) continue
+    const completed = artifact.type === 'flashcards'
+      ? (activity.artifactCardsSeen ?? []).filter(key => key.startsWith(`${artifact.id}:`)).length
+      : Object.keys(activity.practiceAttempts ?? {}).filter(key => key.startsWith(`page:${artifact.id}:`)).length
+    parts.push(Math.min(1, completed / items.length))
+  }
   return Math.round(parts.reduce((sum, part) => sum + part, 0) / parts.length * 100)
 }
 
@@ -64,7 +76,7 @@ export function workspaceProgress(courses: Course[], activity: StudyActivity) {
     materials: materials.length,
     started: percentages.filter(value => value > 0).length,
     percent: materials.length ? Math.round(percentages.reduce((sum, value) => sum + value, 0) / materials.length) : 0,
-    reviewedCards: materials.reduce((sum, material) => sum + (activity[material.id]?.flashcardsSeen?.length ?? 0), 0),
+    reviewedCards: materials.reduce((sum, material) => sum + (activity[material.id]?.flashcardsSeen?.length ?? 0) + (activity[material.id]?.artifactCardsSeen?.length ?? 0), 0),
     sessionSteps: materials.reduce((sum, material) => sum + (activity[material.id]?.sessionSteps?.length ?? 0), 0),
     answered: answers.length,
     correct: answers.filter(Boolean).length,

@@ -5,6 +5,8 @@ import { imageLimits, prepareImages, type ImageAttachment } from './lib/imageUti
 import { supabase } from './lib/supabase'
 import { ResponseRenderer } from './ResponseRenderer'
 import { Icon } from './Icon'
+import type { SolutionDraft } from './types'
+import { clearResolverImages, loadResolverImages, pruneResolverImages, storeResolverImages } from './lib/resolverAttachments'
 
 type ChatMessage = { id: string; role: 'user' | 'assistant'; text: string; createdAt: string; imageCount?: number; remoteId?: string }
 type ChatThread = { id: string; title: string; category: string; deep: boolean; createdAt: string; updatedAt: string; messages: ChatMessage[] }
@@ -55,7 +57,7 @@ const suggestions: Record<string, string[]> = {
 }
 const categories = Object.keys(suggestions)
 
-export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; feedback?: ReactNode }) {
+export function ResolverPage({ workspaceId, feedback, onSave }: { workspaceId: string; feedback?: ReactNode; onSave: (draft: SolutionDraft) => void }) {
   const { user } = useAuth()
   const [initialThreads] = useState<ChatThread[]>(() => user ? loadThreads(user.id, workspaceId) : [])
   const [threads, setThreads] = useState(initialThreads)
@@ -83,11 +85,12 @@ export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; f
   const messageListRef = useRef<HTMLDivElement>(null)
   const historyRef = useRef<HTMLElement>(null)
   const historyToggleRef = useRef<HTMLButtonElement>(null)
+  const turnImages = useRef(new Map<string, ImageAttachment[]>())
   const activeThread = threads.find(thread => thread.id === activeId)
 
   useEffect(() => {
     if (!user) return
-    try { localStorage.setItem(chatKey(user.id, workspaceId), JSON.stringify(threads.slice(0, 25))) }
+    try { localStorage.setItem(chatKey(user.id, workspaceId), JSON.stringify(threads.slice(0, 25))); void pruneResolverImages(user.id, workspaceId, threads.slice(0, 25).flatMap(thread => thread.messages.map(message => message.id))).catch(() => {}) }
     catch { setError('No pudimos guardar esta conversación en el navegador. Libera espacio de almacenamiento.') }
   }, [threads, user, workspaceId])
 
@@ -189,6 +192,10 @@ export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; f
     const context = previous.slice(-12).map(message => `${message.role === 'user' ? 'Estudiante' : 'Nexo'}: ${message.text}`).join('\n\n').slice(-12000) || undefined
     const activeImages = images
     const turn: ChatMessage = { id: newId(), role: 'user', text, createdAt: now, imageCount: activeImages.length }
+    if (activeImages.length && user) {
+      turnImages.current.set(turn.id, activeImages)
+      void storeResolverImages(user.id, workspaceId, turn.id, activeImages).catch(() => { /* The current turn still has its images in memory. */ })
+    }
     setThreads(current => {
       const existing = current.find(thread => thread.id === threadId)
       if (existing) return [{ ...existing, updatedAt: now, messages: [...existing.messages, turn] }, ...current.filter(thread => thread.id !== threadId)]
@@ -214,9 +221,20 @@ export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; f
     catch { /* Clipboard access may be unavailable. */ }
   }
 
+  const saveAnswer = async (message: ChatMessage) => {
+    if (!activeThread || !user) return
+    const index = activeThread.messages.findIndex(item => item.id === message.id)
+    const source = activeThread.messages.slice(0, index).reverse().find(item => item.role === 'user')
+    if (!source) return
+    const attachments = turnImages.current.get(source.id) ?? (source.imageCount ? await loadResolverImages(user.id, workspaceId, source.id).catch(() => []) : [])
+    onSave({ question: source.text, answer: message.text, category: activeThread.category,
+      sourceKey: `${activeThread.id}:${message.id}`, images: attachments, expectedImages: source.imageCount ?? 0 })
+  }
+
   const clearHistory = async () => {
     if (busy || !window.confirm('¿Borrar todas las conversaciones de este espacio?')) return
     const ids = threads.flatMap(thread => thread.messages.map(message => message.remoteId).filter((id): id is string => Boolean(id)))
+    if (user) void clearResolverImages(user.id, workspaceId, threads.flatMap(thread => thread.messages.map(message => message.id))).catch(() => {})
     setThreads([]); startNew()
     if (user && workspaceId === 'general') localStorage.removeItem(`${LEGACY_HISTORY_PREFIX}${user.id}`)
     if (user && supabase && ids.length) await supabase.from('ai_queries').delete().eq('user_id', user.id).in('id', ids)
@@ -229,12 +247,12 @@ export function ResolverPage({ workspaceId, feedback }: { workspaceId: string; f
   return <section className="solver-shell">
     <div className="solver-heading"><p className="solver-subtitle">Pregunta, adjunta imágenes y sigue profundizando en la misma conversación.</p><div className="solver-heading-actions">{threads.length > 0 && <button ref={historyToggleRef} className="secondary solver-history-toggle" aria-controls="solver-history" aria-expanded={historyOpen} onClick={() => setHistoryOpen(value => !value)}>{historyOpen ? 'Ocultar conversaciones' : 'Mostrar conversaciones'}</button>}{activeThread && <button className="secondary" onClick={startNew} disabled={busy}>＋ Nuevo chat</button>}{feedback}</div></div>
     {historyOpen && threads.length > 0 && <button className="solver-history-backdrop" aria-label="Cerrar conversaciones" onClick={() => { setHistoryOpen(false); historyToggleRef.current?.focus() }}/>}
-    <div className={`solver-layout ${threads.length ? 'has-history' : 'no-history'} ${historyOpen ? 'history-open' : 'history-hidden'}`}>
+    <div className={`solver-layout ${threads.length ? 'has-history' : 'no-history'} ${historyOpen && threads.length ? 'history-open' : 'history-hidden'}`}>
       {historyOpen && threads.length > 0 && <aside ref={historyRef} className="solver-history" id="solver-history" role={window.matchMedia('(max-width: 700px)').matches ? 'dialog' : undefined} aria-modal={window.matchMedia('(max-width: 700px)').matches ? true : undefined} aria-label="Conversaciones recientes" tabIndex={-1}><div className="solver-history-head"><strong>Conversaciones</strong><button onClick={clearHistory} disabled={busy}>Limpiar</button><button className="solver-history-close" aria-label="Cerrar conversaciones" onClick={() => { setHistoryOpen(false); historyToggleRef.current?.focus() }}><Icon name="close"/></button></div><div className="solver-thread-list">{threads.slice(0, 25).map(thread => <button key={thread.id} className={activeId === thread.id ? 'active' : ''} onClick={() => openThread(thread)} disabled={busy}><span>✦</span><span><strong>{thread.title}</strong><small>{thread.category} · {thread.messages.filter(message => message.role === 'assistant').length} respuestas</small></span></button>)}</div></aside>}
       <div className="solver-chat"><div className="solver-messages" ref={messageListRef} aria-label="Conversación con Nexo IA">
         {activeThread?.messages.length ? activeThread.messages.map(message => message.role === 'user'
           ? <div className="solver-turn user" key={message.id}><div className="solver-user-bubble"><p>{message.text}</p>{Boolean(message.imageCount) && <small>📎 {message.imageCount} {message.imageCount === 1 ? 'imagen' : 'imágenes'}</small>}</div></div>
-          : <div className="solver-turn assistant" key={message.id}><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-assistant-bubble"><div className="solver-message-head"><strong>Nexo IA</strong><button onClick={() => copyAnswer(message)}>{copiedId === message.id ? '✓ Copiado' : 'Copiar'}</button></div><div className="solver-answer"><ResponseRenderer text={message.text}/></div></div></div>)
+          : <div className="solver-turn assistant" key={message.id}><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-assistant-bubble"><div className="solver-message-head"><strong>Nexo IA</strong><div className="solver-answer-actions"><button onClick={() => copyAnswer(message)}>{copiedId === message.id ? '✓ Copiado' : 'Copiar'}</button><button onClick={() => void saveAnswer(message)}>Guardar</button></div></div><div className="solver-answer"><ResponseRenderer text={message.text}/></div></div></div>)
           : <div className="solver-empty"><span>✦</span><h3>¿Por dónde empezamos?</h3><p>Escribe una duda o adjunta una imagen. Después puedes seguir preguntando sin perder el contexto.</p><div className="solver-prompts">{(suggestions[category] || suggestions.General).map(suggestion => <button key={suggestion} onClick={() => { setQuestion(suggestion); textareaRef.current?.focus() }}>{suggestion} ↗</button>)}</div></div>}
         {busy && <div className="solver-turn assistant solver-thinking" role="status"><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-thinking-bubble"><span className="solver-thinking-dots" aria-hidden="true"><i/><i/><i/></span><strong>{stages[thinkingStage]}</strong><small>Nexo está preparando tu respuesta</small></div></div>}
         {error && <div className="solver-error" role="alert"><span>{error}</span>{failedRequest && <button onClick={() => void requestAnswer(failedRequest)}>Reintentar</button>}</div>}

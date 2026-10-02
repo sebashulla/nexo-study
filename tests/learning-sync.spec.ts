@@ -63,6 +63,6 @@ test('courses and material text restore from the academic repository after local
   await expect(page.locator('.material-text-preview')).toContainText('cuadrado de la velocidad')
   await page.getByRole('button', { name: /Física remota/ }).first().click()
   await page.getByRole('navigation', { name: 'Secciones de Física remota' }).getByRole('button', { name: 'Biblioteca' }).click()
-  await expect(page.locator('.course-artifact-group')).toContainText('Resumen')
+  await expect(page.locator('.library-entry').filter({ hasText: 'Resumen' })).toBeVisible()
   expect([...(academic.get('courses')?.values() ?? [])].filter(row => row.name === 'Física remota')).toHaveLength(1)
 })

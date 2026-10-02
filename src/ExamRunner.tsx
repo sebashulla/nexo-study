@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { Course, Material, QuizQuestion, StudyArtifactType } from './types'
 import type { RecallRating } from './lib/learningState'
 import { callAI } from './lib/aiClient'
-import { artifactQuestions } from './lib/artifactPrompts'
+import { artifactPage, artifactQuestions } from './lib/artifactPrompts'
 import { ResponseRenderer } from './ResponseRenderer'
 
 type Written = { question: string; keyPoints: string[]; sourcePage?: number; concept?: string }
@@ -17,7 +17,7 @@ function sourcePage(value: unknown) { return typeof value === 'number' && value 
 function normalize(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ') }
 
 function latestPayload(material: Material, type: StudyArtifactType) {
-  return material.artifacts?.filter(item => item.type === type && item.status === 'ready').sort((a, b) => b.version - a.version)[0]?.payload
+  return material.artifacts?.filter(item => item.type === type && item.status === 'ready' && !artifactPage(item)).sort((a, b) => b.version - a.version)[0]?.payload
 }
 
 function examPool(material: Material): ExamItem[] {

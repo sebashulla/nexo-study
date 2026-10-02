@@ -1,5 +1,15 @@
 export type NexoAiMode = 'standard' | 'deep'
 
+export type SolutionAttachment = { storagePath: string; mimeType: 'image/png' | 'image/jpeg' | 'image/webp'; name: string; bytes: number }
+export type SavedSolution = {
+  id: string; userId: string; courseId: string; question: string; answer: string; category: string
+  createdAt: string; updatedAt: string; source: 'resolver'; sourceKey: string; attachments: SolutionAttachment[]
+}
+export type SolutionDraft = {
+  question: string; answer: string; category: string; sourceKey: string
+  images: import('./lib/imageUtils').ImageAttachment[]; expectedImages: number
+}
+
 export type MaterialPage = { page: number; text: string }
 export type ProcessingStatus = 'queued' | 'processing' | 'ready' | 'failed'
 export type DocumentKind = 'text' | 'scan' | 'mixed' | 'unknown'

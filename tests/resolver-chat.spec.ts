@@ -29,7 +29,7 @@ test('Resolver behaves as a conversation with thinking stages, follow-up context
     await route.fulfill({ json: { text: requests.length === 1 ? 'El resultado es 4.' : 'Porque dos más dos suman cuatro.' } })
   })
   await login(page)
-  await expect(page.getByRole('heading', { name: 'Resolver con Nexo IA' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: page.viewportSize()!.width <= 700 ? 'Resolver' : 'Resolver con Nexo IA', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Nuevo chat' })).toHaveCount(0)
   const feedback = page.getByRole('button', { name: 'Enviar retroalimentación' })
   await expect(feedback).toHaveCount(1)

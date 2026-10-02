@@ -29,7 +29,7 @@ export function CourseOverview({ course, activity, memory, sessions, onOpenMater
         <button className="primary" onClick={() => recent ? onOpenMaterial(recent.id) : onUpload()}>{recent ? 'Continuar →' : 'Agregar material'}</button>
       </div>
       <div className="course-overview-side"><strong>{activityPercent}% de actividad</strong>
-        <p>{mastery.concepts ? `${mastery.percent}% de dominio estimado · ${weak.length} conceptos por repasar` : 'El dominio aparecerá después de practicar conceptos.'}</p>
+        <p>{mastery.sufficient ? `${mastery.percent}% de dominio estimado · ${weak.length} conceptos por repasar` : 'Dominio: sin datos suficientes. Practica para estimarlo.'}</p>
         <button className="text-button" onClick={onCourseAi}>Preguntar a Nexo →</button>
       </div>
     </section>
