@@ -3,6 +3,7 @@ import type { Course, SavedSolution } from './types'
 import { callAI } from './lib/aiClient'
 import { contextForQuestion } from './lib/learningContext'
 import { searchRemoteContext } from './lib/learningRepository'
+import { ChatComposer } from './ChatComposer'
 import { ResponseRenderer } from './ResponseRenderer'
 import { masterySummary, type LearningMemory } from './lib/learningState'
 import { workspaceProgress, type StudyActivity } from './lib/studyProgress'
@@ -51,6 +52,6 @@ export function CourseAiPage({ course, memory, activity, seed, onOpenSource }: {
 
   return <section className="course-ai-page"><div className="course-ai-intro"><p className="eyebrow">Nexo IA · {course.name}</p><h3>Pregunta sobre todo el curso</h3><p>Nexo busca los fragmentos relevantes de tus materiales y conserva la referencia de origen.</p>{available && suggestions.length > 0 && <div className="course-ai-suggestions">{suggestions.map(item => <button key={item.label} className="secondary" onClick={() => setQuestion(item.prompt)}>{item.label} →</button>)}</div>}</div>
     <div className="course-ai-thread">{seed && <p className="chat-page-context">Contexto: solución guardada · {seed.solution.question.slice(0, 160)}</p>}{turns.length ? turns.map((turn, index) => <article key={index}><div className="material-chat-question">{turn.question}</div><div className="material-chat-answer"><ResponseRenderer text={turn.answer}/><div className="material-chat-sources">{turn.sources.map((source, i) => <button key={i} onClick={() => onOpenSource(source.materialId, source.pageStart)}>{source.materialTitle} · página {source.pageStart}</button>)}</div></div></article>) : <div className="course-ai-empty"><strong>{available ? '¿Qué te gustaría comprender mejor?' : 'Añade un material para conversar con Nexo sobre este curso.'}</strong><p>{available ? 'Puedes relacionar ideas de varias clases sin volver a explicar qué documentos estás estudiando.' : 'Después de cargarlo, Nexo podrá buscar dentro de él y citar las páginas relevantes.'}</p></div>}{busy && <p role="status">Nexo está revisando los materiales relevantes…</p>}</div>
-    <div className="course-ai-compose">{error && <p role="alert">{error}</p>}<textarea aria-label="Preguntar sobre el curso" rows={3} disabled={!available} value={question} onChange={event => setQuestion(event.target.value)} onKeyDown={event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); void send() } }} placeholder="Pregunta algo sobre lo que has estudiado en este curso…"/><button className="primary" disabled={!available || !question.trim() || busy} onClick={() => void send()}>Preguntar a Nexo</button></div>
+    <ChatComposer className="course-ai-compose" value={question} onChange={setQuestion} onSend={() => void send()} label="Preguntar sobre el curso" placeholder="Pregunta a Nexo sobre este curso…" busy={busy} disabled={!available}>{error && <p role="alert">{error}</p>}</ChatComposer>
   </section>
 }

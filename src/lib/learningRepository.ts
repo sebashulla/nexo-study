@@ -1,7 +1,24 @@
-import type { Course, Material, MaterialChunk, MaterialTopic, SavedSolution, SolutionAttachment, SolutionDraft, StudyArtifact, StudySession, StudySessionEvent } from '../types'
+import type { Course, Material, MaterialChunk, MaterialTopic, SavedSolution, SolutionAttachment, SolutionDraft, StudyArtifact, StudyArtifactType, StudySession, StudySessionEvent } from '../types'
 import type { StudyActivity } from './studyProgress'
 import type { LearningMemory } from './learningState'
 import { supabase } from './supabase'
+
+export async function searchStudyArtifacts(userId: string, types: StudyArtifactType[], materialIds: string[]) {
+  if (!supabase || (!types.length && !materialIds.length)) return []
+  let query = supabase.from('study_artifacts').select('id,course_id,source_material_id,type,scope:payload->scope')
+    .eq('user_id', userId).eq('status', 'ready').order('updated_at', { ascending: false }).limit(20)
+  query = types.length ? query.in('type', types) : query.in('source_material_id', materialIds)
+  const { data, error } = await query
+  if (error) throw error
+  return (data ?? []).map(row => ({ id: row.id as string, courseId: row.course_id as string, materialId: row.source_material_id as string,
+    type: row.type as StudyArtifactType, page: row.scope && typeof row.scope === 'object' && !Array.isArray(row.scope) && typeof row.scope.page === 'number' ? row.scope.page : undefined }))
+}
+
+export async function renameMaterial(userId: string, courseId: string, materialId: string, title: string) {
+  if (!supabase) throw new Error('Nexo no está conectado con tu cuenta.')
+  const { data, error } = await supabase.from('materials').update({ title }).eq('user_id', userId).eq('course_id', courseId).eq('id', materialId).select('id').single()
+  if (error || !data) throw error ?? new Error('No pudimos encontrar este material.')
+}
 
 type CourseRow = { id: string; name: string; emoji: string }
 type MaterialRow = {

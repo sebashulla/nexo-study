@@ -12,12 +12,12 @@ import '@fontsource/manrope/latin-700.css'
 import '@fontsource/manrope/latin-800.css'
 import './styles.css'
 import './responsive.css'
+import './navigation.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <AuthProvider>
       <App />
-      <div className="beta-corner" aria-label="Nexo Study está en beta"><span>●</span> BETA</div>
     </AuthProvider>
   </React.StrictMode>,
 )

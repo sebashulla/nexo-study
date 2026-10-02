@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { navigateSection } from './helpers/navigation'
 import { academicMock, login, png, user } from './helpers/academicMock'
 import { todayActions } from '../src/lib/productIntelligence'
 import { applyRecall, masterySummary } from '../src/lib/learningState'
@@ -61,8 +62,8 @@ test('Resolver saves multiple private images, restores library, deduplicates and
   await page.getByRole('button', { name: 'Cerrar diálogo' }).click()
   await page.keyboard.press('Control+k')
   dialog = page.getByRole('dialog', { name: 'Buscar en Nexo Study' })
-  await dialog.getByRole('textbox').fill('energía cinética')
-  await dialog.locator('.global-search-results button').filter({ hasText: '¿Qué es la energía cinética?' }).click()
+  await dialog.getByRole('combobox').fill('energía cinética')
+  await dialog.locator('.global-search-results button').filter({ hasText: 'Física de prueba' }).filter({ hasText: '¿Qué es la energía cinética?' }).click()
   dialog = page.getByRole('dialog', { name: 'Solución guardada' })
   await dialog.getByRole('button', { name: 'Practicar este concepto' }).click()
   await expect(page).toHaveURL(/\/courses\/course-cohesion\/ai$/)
@@ -139,10 +140,10 @@ test('page chat and cached artifacts use only the chosen page; errors update the
   await page.locator('.page-artifact-view .quiz-card').first().getByRole('button', { name: /Solo volumen/ }).click()
   await page.getByRole('button', { name: /← Física de prueba/ }).click()
   await expect(page.locator('.course-recommendations')).toContainText('repaso')
-  await page.getByRole('button', { name: 'Inicio', exact: true }).first().click()
+  await navigateSection(page, 'Inicio')
   await expect(page.locator('.hero-card')).toHaveCount(0)
   await expect(page.locator('.home-today')).toContainText('conceptos por reforzar')
-  await page.getByRole('button', { name: 'Progreso', exact: true }).first().click()
+  await navigateSection(page, 'Progreso')
   await expect(page.locator('.progress-focus')).toContainText('Energía cinética')
   await expect(page.locator('.stat-card').filter({ hasText: 'Dominio estimado' })).toContainText('Sin datos suficientes')
   await expect(page.locator('.progress-recent')).toContainText('1 preguntas respondidas')
@@ -153,7 +154,7 @@ test('page chat and cached artifacts use only the chosen page; errors update the
   await page.locator('.page-artifact-view .flashcard').click()
   await page.getByRole('button', { name: 'Difícil', exact: true }).click()
   await page.getByRole('button', { name: /← Física de prueba/ }).click()
-  await page.getByRole('button', { name: 'Progreso', exact: true }).first().click()
+  await navigateSection(page, 'Progreso')
   await expect(page.locator('.stat-card').filter({ hasText: 'Tarjetas repasadas' })).toContainText('1')
 })
 
@@ -217,7 +218,7 @@ test('slow hydration preserves newer remote learning state before any autosave',
   await expect.poll(() => mock.requests.some(item => item.table === 'learning_state' && item.method === 'POST')).toBe(true)
   expect(prematureWrites).toEqual([])
   expect(mock.rows.get('learning_state')!.get(key)!.attempts).toBe(7)
-  await page.getByRole('button', { name: 'Progreso', exact: true }).first().click()
+  await navigateSection(page, 'Progreso')
   await expect(page.locator('.stat-card').filter({ hasText: 'Dominio estimado' })).toContainText('90%')
 })
 
@@ -240,9 +241,9 @@ test('a failed written review cannot create mastery; explicit self assessment up
   fail = false
   await page.getByRole('button', { name: 'Revisar con Nexo' }).click()
   await page.getByRole('button', { name: 'Necesito repasar' }).click()
-  await page.getByRole('button', { name: 'Inicio', exact: true }).first().click()
+  await navigateSection(page, 'Inicio')
   await expect(page.locator('.home-today')).toContainText('conceptos por reforzar')
-  await page.getByRole('button', { name: 'Progreso', exact: true }).first().click()
+  await navigateSection(page, 'Progreso')
   await expect(page.locator('.progress-focus')).toContainText('Energía cinética')
   await expect(page.locator('.progress-recent')).toContainText('1 preguntas respondidas')
 })
@@ -265,8 +266,8 @@ test('mobile header, drawer, suggestions, accordions and search fit all target w
     if (width < 700) {
       await expect(page.locator('.mobile-title')).toHaveText('Resolver')
       const composer = await page.locator('.solver-composer').boundingBox()
-      const nav = await page.getByRole('navigation', { name: 'Navegación móvil' }).boundingBox()
-      expect(composer!.y + composer!.height).toBeLessThanOrEqual(nav!.y - 8)
+      await expect(page.getByRole('navigation', { name: 'Navegación móvil' })).toHaveCount(0)
+      expect(composer!.y + composer!.height).toBeLessThanOrEqual(height)
       await page.getByRole('button', { name: 'Abrir navegación' }).click()
       const drawer = await page.locator('.sidebar').boundingBox()
       expect(drawer!.width).toBeLessThanOrEqual(320.5)

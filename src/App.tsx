@@ -4,7 +4,7 @@ import { extractPdf, INITIAL_PDF_PAGE_BUDGET, MAX_PDF_BYTES } from './lib/docume
 import { chunksForMaterial, topicsForMaterial } from './lib/learningContext'
 import { displayMaterialTitle, suggestMaterialTitle } from './lib/materialTitles'
 import { quickSummaryFor } from './lib/quickSummary'
-import { loadCourseArtifacts, loadCourseDetails, loadCourseSolutions, loadSavedSolution, loadPageText, loadMaterialContext, saveSolution, saveActivity, saveArtifact, saveCourses, saveLearningState, saveMaterialContext, saveSessionEvents, saveSessions, signedPdfUrl, synchronizeCourses, uploadPrivatePdf } from './lib/learningRepository'
+import { loadCourseArtifacts, loadCourseDetails, loadCourseSolutions, loadSavedSolution, loadPageText, loadMaterialContext, saveSolution, saveActivity, saveArtifact, saveCourses, saveLearningState, saveMaterialContext, saveSessionEvents, saveSessions, renameMaterial, signedPdfUrl, synchronizeCourses, uploadPrivatePdf } from './lib/learningRepository'
 import { applyRecall, loadLearningMemory, saveLearningMemory, type LearningMemory, type RecallRating } from './lib/learningState'
 import { activateStudySession, buildStudySession, completeSessionStep, loadLocalSessionEvents, loadLocalSessions, saveLocalSessionEvents, saveLocalSessions, type SessionDuration, type SessionObjective } from './lib/studySessions'
 import { artifactFlashcards, artifactPage, artifactQuestions, generateArtifactWithAI } from './lib/artifactPrompts'
@@ -16,21 +16,28 @@ import type { Course, Material, SavedSolution, SolutionDraft, StudyArtifact, Stu
 import { useAuth } from './auth/AuthContext'
 import type { User } from '@supabase/supabase-js'
 import { BrandLogo } from './BrandLogo'
-import { FeedbackWidget } from './FeedbackWidget'
+import { FeedbackDialog } from './FeedbackWidget'
+import { AccountMenu, type AccountAction } from './AccountMenu'
+import { AccountUtilities, useAccountIdentity } from './AccountUtilities'
 import { Dialog } from './Dialog'
 import { Icon } from './Icon'
 import { authErrorMessage } from './auth/authErrors'
+import { useBodyScrollLock } from './hooks/useBodyScrollLock'
 import { useWorkspaces } from './hooks/useWorkspaces'
 import { coursesInWorkspace, workspaceForCourse, GENERAL_WORKSPACE } from './lib/workspaces'
 import { loadStudyActivity, materialProgress, saveStudyActivity, studyPackFor, workspaceProgress, type MaterialActivity, type StudyActivity } from './lib/studyProgress'
 import { WorkspaceSwitcher } from './WorkspaceSwitcher'
-import { FoldersPage } from './FoldersPage'
-import { ProgressPage } from './ProgressPage'
+const FoldersPage = lazy(() => import('./FoldersPage').then(module => ({ default: module.FoldersPage })))
+const ProgressPage = lazy(() => import('./ProgressPage').then(module => ({ default: module.ProgressPage })))
 import { CourseOverview } from './CourseOverview'
-import { GlobalSearch } from './GlobalSearch'
-import { SaveSolutionDialog } from './SaveSolutionDialog'
-import { SavedSolutionDialog } from './SavedSolutionDialog'
+const GlobalSearch = lazy(() => import('./GlobalSearch').then(module => ({ default: module.GlobalSearch })))
+const SaveSolutionDialog = lazy(() => import('./SaveSolutionDialog').then(module => ({ default: module.SaveSolutionDialog })))
+const SavedSolutionDialog = lazy(() => import('./SavedSolutionDialog').then(module => ({ default: module.SavedSolutionDialog })))
 import { CourseLibrary } from './CourseLibrary'
+import { EmptyState } from './EmptyState'
+import { CourseCard } from './CourseCard'
+import { MaterialCard } from './MaterialCard'
+import { AcademicItemDialog, type AcademicEdit } from './AcademicItemDialog'
 import { AdaptiveHome } from './AdaptiveHome'
 import { FlashcardView, QuizView } from './PracticeViews'
 import { todayActions, type CourseRecommendation } from './lib/productIntelligence'
@@ -155,6 +162,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [courseError, setCourseError] = useState('')
   const [showMaterialForm, setShowMaterialForm] = useState(false)
   const [showGlobalSearch, setShowGlobalSearch] = useState(false)
+  const [resolverThreadId, setResolverThreadId] = useState<string | undefined>()
   const [solutionDraft, setSolutionDraft] = useState<SolutionDraft | null>(null)
   const [solutionsByCourse, setSolutionsByCourse] = useState<Record<string, SavedSolution[]>>({})
   const [selectedSolution, setSelectedSolution] = useState<SavedSolution | null>(null)
@@ -162,7 +170,11 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [solutionsError, setSolutionsError] = useState('')
   const [solutionRetry, setSolutionRetry] = useState(0)
   const [courseAiSeed, setCourseAiSeed] = useState<{ solution: SavedSolution; question: string } | null>(null)
-  const [showSettings, setShowSettings] = useState(false)
+  const [academicEdit, setAcademicEdit] = useState<AcademicEdit | null>(null)
+  const [utility, setUtility] = useState<AccountAction | null>(null)
+  const { identity, onName } = useAccountIdentity(user)
+  const [reducedMotion, setReducedMotion] = useState(() => { try { return localStorage.getItem('nexo-reduced-motion') === 'true' } catch { return false } })
+  useEffect(() => { document.documentElement.dataset.reducedMotion = String(reducedMotion); try { localStorage.setItem('nexo-reduced-motion', String(reducedMotion)) } catch {} }, [reducedMotion])
   const [uploadCourseId, setUploadCourseId] = useState('')
   const [pendingUploadFile, setPendingUploadFile] = useState<File | null>(null)
   const [manualDraft, setManualDraft] = useState(false)
@@ -189,12 +201,18 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [flashIndex, setFlashIndex] = useState(0)
   const [flashRevealed, setFlashRevealed] = useState(false)
   const [quizAnswers, setQuizAnswers] = useState<Record<number, number>>({})
-  const [showAccountMenu, setShowAccountMenu] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem('nexo-study-sidebar-collapsed') === 'true' }
     catch { return false }
   })
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  useBodyScrollLock(mobileSidebarOpen)
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 700px)')
+    const resized = () => { if (!media.matches) setMobileSidebarOpen(false) }
+    media.addEventListener('change', resized)
+    return () => media.removeEventListener('change', resized)
+  }, [])
   const [showWorkspaceDrawer, setShowWorkspaceDrawer] = useState(() => window.location.pathname === '/folders')
   const [signingOut, setSigningOut] = useState(false)
   const [accountError, setAccountError] = useState('')
@@ -203,7 +221,6 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   const [syncRetry, setSyncRetry] = useState(0)
   const [learningReady, setLearningReady] = useState(false)
   const [remoteEnabled, setRemoteEnabled] = useState(false)
-  const accountRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLElement>(null)
   const mobileMenuRef = useRef<HTMLButtonElement>(null)
   const [aiGeneratingMaterialId, setAiGeneratingMaterialId] = useState<string | null>(null)
@@ -293,13 +310,12 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
   }
 
   useEffect(() => {
-    const onPopState = () => { setPathname(window.location.pathname); setShowAccountMenu(false); setMobileSidebarOpen(false) }
+    const onPopState = () => { setPathname(window.location.pathname); setMobileSidebarOpen(false) }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
   const navigate = (path: string, replace = false) => {
-    setShowAccountMenu(false)
     setMobileSidebarOpen(false)
     if (window.location.pathname === path) return
     window.history[replace ? 'replaceState' : 'pushState']({}, '', path)
@@ -315,8 +331,6 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
 
   useEffect(() => {
     if (!mobileSidebarOpen) return
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
     sidebarRef.current?.querySelector<HTMLButtonElement>('.sidebar-mobile-close')?.focus()
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') { setMobileSidebarOpen(false); mobileMenuRef.current?.focus() }
@@ -330,7 +344,7 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
       }
     }
     document.addEventListener('keydown', closeOnEscape)
-    return () => { document.removeEventListener('keydown', closeOnEscape); document.body.style.overflow = previousOverflow }
+    return () => { document.removeEventListener('keydown', closeOnEscape) }
   }, [mobileSidebarOpen])
 
   useEffect(() => {
@@ -418,15 +432,6 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     const session = sessions.find(item => item.id === sessionId)
     if (session) navigate(materialStudyPath(session.courseId, materialId, mode))
   }
-
-  useEffect(() => {
-    if (!showAccountMenu) return
-    const dismiss = (event: PointerEvent) => { if (!accountRef.current?.contains(event.target as Node)) setShowAccountMenu(false) }
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { setShowAccountMenu(false); accountRef.current?.querySelector('button')?.focus() } }
-    document.addEventListener('pointerdown', dismiss)
-    document.addEventListener('keydown', escape)
-    return () => { document.removeEventListener('pointerdown', dismiss); document.removeEventListener('keydown', escape) }
-  }, [showAccountMenu])
 
   const logout = async () => {
     setSigningOut(true); setAccountError('')
@@ -990,16 +995,37 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
     })()
   }
 
+  const openArtifact = (courseId: string, materialId: string, id: string, type: StudyArtifactType, page?: number) => {
+    if (page || type === 'summary') { openMaterial(courseId, materialId); setSourceJump({ materialId, page: page ?? 1, artifactId: id }); return }
+    const mode = ({ flashcards: 'flashcards', multiple_choice: 'multiple-choice', written_questions: 'written', fill_blanks: 'fill-blanks', notes: 'notes', exam: 'exam' } as Partial<Record<StudyArtifactType, MaterialStudyMode>>)[type]
+    navigate(mode ? materialStudyPath(courseId, materialId, mode) : materialWorkspacePath(courseId, materialId))
+  }
+  const downloadMaterial = async (material: Material) => {
+    try {
+      const file = pdfFiles[material.id]
+      const blob = file ?? await fetch(await signedPdfUrl(material.storagePath!)).then(response => { if (!response.ok) throw new Error('Download failed'); return response.blob() })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a'); link.href = url; link.download = material.sourceName || `${material.title}.pdf`; link.click()
+      window.setTimeout(() => URL.revokeObjectURL(url), 10000)
+    } catch { setStorageError('No pudimos descargar el original. Inténtalo de nuevo.') }
+  }
+
   const topTitle = route.materialId ? 'Estudiar' : route.courseId ? 'Curso' : tabTitle(tab)
+  const accountAction = (action: AccountAction) => {
+    setMobileSidebarOpen(false)
+    if (action === 'logout') { void logout(); return }
+    if (action === 'admin') { if (identity.isAdmin) window.location.href = '/nexo-ops/feedback-console'; return }
+    setUtility(action)
+  }
 
   if (!workspaces.ready || !learningReady) return <div className="app-loading workspace-loading"><BrandLogo iconOnly/><strong>{!learningReady ? 'Preparando tu espacio de aprendizaje…' : workspaces.loading ? 'Cargando tus espacios…' : 'No pudimos cargar tus espacios'}</strong>{workspaces.error && learningReady && <><p>{workspaces.error}</p><button className="primary" onClick={() => workspaces.refresh()}>Reintentar</button></>}</div>
 
   return (
-    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''} ${showWorkspaceDrawer ? 'workspace-drawer-open' : ''} ${showCourseForm || showMaterialForm || showGlobalSearch || solutionDraft || selectedSolution || showSettings ? 'dialog-open' : ''} ${route.workspace || route.materialStudyMode ? 'intensive-study' : ''} ${tab === 'resolver' ? 'resolver-active' : ''}`}>
+    <div className={`app-shell ${sidebarCollapsed ? 'sidebar-collapsed' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''} ${showWorkspaceDrawer ? 'workspace-drawer-open' : ''} ${showCourseForm || showMaterialForm || showGlobalSearch || solutionDraft || selectedSolution || utility || academicEdit ? 'dialog-open' : ''} ${route.workspace || route.materialStudyMode ? 'intensive-study' : ''} ${tab === 'resolver' ? 'resolver-active' : ''} ${tab === 'resolver' || tab === 'corrector' || route.workspace ? 'tool-surface' : ''}`}>
       <a href="#main-content" className="skip-link">Saltar al contenido</a>
       {mobileSidebarOpen && <button className="mobile-sidebar-backdrop" aria-label="Cerrar navegación" onClick={() => { setMobileSidebarOpen(false); mobileMenuRef.current?.focus() }}/>}
       <aside ref={sidebarRef} className="sidebar" role={mobileSidebarOpen ? 'dialog' : undefined} aria-modal={mobileSidebarOpen || undefined} aria-label="Barra lateral principal">
-        <div className="sidebar-top"><button className="brand" onClick={() => setTab('inicio')} aria-label="Ir al inicio"><BrandLogo compact/></button><button className="sidebar-collapse-toggle" aria-label={sidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(value => !value)}><Icon name={sidebarCollapsed ? 'expand' : 'collapse'}/></button><button className="sidebar-mobile-close" aria-label="Cerrar navegación" onClick={() => { setMobileSidebarOpen(false); mobileMenuRef.current?.focus() }}><Icon name="close"/></button></div>
+        <div className="sidebar-top"><button className="brand" onClick={() => setTab('inicio')} aria-label="Ir al inicio"><BrandLogo compact/><span className="sidebar-beta">BETA</span></button><button className="sidebar-collapse-toggle" aria-label={sidebarCollapsed ? 'Expandir barra lateral' : 'Colapsar barra lateral'} aria-expanded={!sidebarCollapsed} onClick={() => setSidebarCollapsed(value => !value)}><Icon name={sidebarCollapsed ? 'expand' : 'collapse'}/></button><button className="sidebar-mobile-close" aria-label="Cerrar navegación" onClick={() => { setMobileSidebarOpen(false); mobileMenuRef.current?.focus() }}><Icon name="close"/></button></div>
         <nav aria-label="Navegación principal">
           <NavButton icon="⌂" label="Inicio" active={tab === 'inicio'} onClick={() => setTab('inicio')} />
           <NavButton icon="▦" label="Mis cursos" active={tab === 'cursos'} onClick={() => setTab('cursos')} />
@@ -1007,52 +1033,54 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
           <NavButton icon="✎" label="Corrector" active={tab === 'corrector'} onClick={() => setTab('corrector')} />
           <NavButton icon="↗" label="Progreso" active={tab === 'progreso'} onClick={() => setTab('progreso')} />
         </nav>
-        <div className="sidebar-mobile-tools"><button className="secondary" onClick={() => { setMobileSidebarOpen(false); setShowGlobalSearch(true) }}>Buscar en Nexo Study</button><button className="secondary" onClick={() => { setMobileSidebarOpen(false); setShowWorkspaceDrawer(true) }}>Espacio · {workspaces.selectedWorkspace.name}</button><small>BETA</small></div>
-        <button className="sidebar-profile" aria-label="Abrir perfil" onClick={() => { setMobileSidebarOpen(false); setShowAccountMenu(true); accountRef.current?.querySelector('button')?.focus() }}><span>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</span><strong>{user.user_metadata?.full_name || 'Mi cuenta'}</strong></button>
+        <WorkspaceSwitcher selected={workspaces.selectedWorkspace} open={showWorkspaceDrawer} onOpenChange={setShowWorkspaceDrawer}>
+          <Suspense fallback={<div className="page-skeleton" role="status">Cargando espacios…</div>}>
+            {showWorkspaceDrawer && <FoldersPage allCourses={courses} folders={workspaces.folders} memberships={workspaces.memberships} selected={workspaces.selectedWorkspace} activity={activity} onSelect={switchWorkspace} onCreate={async (name, emoji) => { const created = await workspaces.createWorkspace(name, emoji); navigate('/courses'); return created }} onMove={workspaces.moveCourse} onDelete={workspaces.deleteWorkspace} onOpenCourse={id => { setShowWorkspaceDrawer(false); openCourse(id) }} />}
+          </Suspense>
+        </WorkspaceSwitcher>
+        <div className="sidebar-mobile-tools"><button onClick={() => { setMobileSidebarOpen(false); setShowGlobalSearch(true) }}>⌕ Buscar en Nexo</button><button onClick={() => accountAction('profile')}>Perfil / Configuración</button><button onClick={() => accountAction('feedback')}>Enviar comentarios</button><button onClick={() => accountAction('help')}>Ayuda / Guía rápida</button><button disabled={signingOut} onClick={() => accountAction('logout')}>Cerrar sesión</button></div>
+        <AccountMenu sidebar identity={identity} onAction={accountAction} signingOut={signingOut} error={accountError} routeKey={pathname}/>
       </aside>
 
-      <WorkspaceSwitcher selected={workspaces.selectedWorkspace} open={showWorkspaceDrawer} onOpenChange={setShowWorkspaceDrawer}>
-        {showWorkspaceDrawer && <FoldersPage allCourses={courses} folders={workspaces.folders} memberships={workspaces.memberships} selected={workspaces.selectedWorkspace} activity={activity} onSelect={switchWorkspace} onCreate={async (name, emoji) => { const created = await workspaces.createWorkspace(name, emoji); navigate('/courses'); return created }} onMove={workspaces.moveCourse} onDelete={workspaces.deleteWorkspace} onOpenCourse={id => { setShowWorkspaceDrawer(false); openCourse(id) }} />}
-      </WorkspaceSwitcher>
-
-      <main className="main-content" id="main-content" tabIndex={-1}>
-        <header className="topbar"><button ref={mobileMenuRef} className="mobile-menu-toggle" aria-label="Abrir navegación" aria-expanded={mobileSidebarOpen} onClick={() => setMobileSidebarOpen(true)}><Icon name="more"/></button><div><p className="eyebrow">Nexo Study</p><h1>{tab === 'resolver' ? <><span className="desktop-title">{topTitle}</span><span className="mobile-title">Resolver</span></> : topTitle}</h1></div><div className="top-actions"><button className="secondary global-search-trigger" aria-label="Buscar en Nexo Study" onClick={() => setShowGlobalSearch(true)}>⌕ <span>Buscar</span></button><div className="ai-chip"><span className="status-dot"></span><strong>Nexo IA</strong></div><div className="account-wrap" ref={accountRef}><button className="avatar" aria-label="Mi cuenta" aria-expanded={showAccountMenu} aria-controls="account-menu" onClick={() => setShowAccountMenu(value => !value)}>{(user.user_metadata?.full_name || user.email || 'N').trim().charAt(0).toUpperCase()}</button>{showAccountMenu && <div className="account-menu" id="account-menu"><strong>{user.user_metadata?.full_name || 'Estudiante Nexo'}</strong><span>{user.email}</span><button onClick={() => { setShowAccountMenu(false); setShowSettings(true) }}>Configuración</button><button disabled={signingOut} onClick={logout}>{signingOut ? 'Cerrando sesión…' : 'Cerrar sesión'}</button>{accountError && <p role="alert" className="auth-alert error">{accountError}</p>}</div>}</div></div></header>
+      <main inert={mobileSidebarOpen || undefined} className="main-content" id="main-content" tabIndex={-1}>
+        <header className="topbar"><button ref={mobileMenuRef} className="mobile-menu-toggle" aria-label="Abrir navegación" aria-expanded={mobileSidebarOpen} onClick={() => setMobileSidebarOpen(true)}><Icon name="more"/></button><div className="topbar-title"><h1>{tab === 'resolver' ? <><span className="desktop-title">{topTitle}</span><span className="mobile-title">Resolver</span></> : topTitle}</h1></div><div className="top-actions"><button className="secondary global-search-trigger" aria-label="Buscar en Nexo Study" aria-keyshortcuts="Control+k Meta+k" onClick={() => setShowGlobalSearch(true)}>⌕ <span>Buscar</span><kbd>Ctrl K</kbd></button><AccountMenu identity={identity} onAction={accountAction} signingOut={signingOut} error={accountError} routeKey={pathname}/></div></header>
+        <div className="context-strip"><button className="mobile-workspace-context" aria-label={`Cambiar espacio desde el contexto. Actual: ${workspaces.selectedWorkspace.name}`} onClick={() => setShowWorkspaceDrawer(true)}>{workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name} ⌄</button><span className="desktop-workspace-context">{workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</span></div>
         {workspaces.error && <div role="status" className="workspace-warning">{workspaces.error} Estás viendo la última organización guardada. <button onClick={() => workspaces.refresh()}>Reintentar</button></div>}
         {storageError && <p role="alert" className="auth-alert error">{storageError}</p>}
         {syncError && <p role="status" className="workspace-warning">{syncError} <button onClick={retrySynchronization}>Reintentar sincronización</button></p>}
 
-        <Suspense fallback={<div className="app-loading"><BrandLogo iconOnly/><strong>Abriendo tu espacio…</strong></div>}>
+        <Suspense fallback={<div className="page-skeleton" role="status" aria-label="Abriendo tu espacio"><span/><span/><span/></div>}>
 
         {(route.courseId || route.materialId) && <div className="route-breadcrumbs"><button onClick={() => navigate('/courses')}>Cursos</button>{activeCourse && <><span>›</span><button onClick={() => navigate(coursePath(activeCourse.id))}>{activeCourse.emoji} {activeCourse.name}</button></>}{route.materialId && activeMaterial && <><span>›</span><strong>{activeMaterial.title}</strong></>}</div>}
 
         {tab === 'inicio' && <section className={`page-grid home-page ${recentHomeActivity ? 'active-home' : ''}`}>
-          {recentHomeActivity && <AdaptiveHome name={typeof user.user_metadata?.full_name === 'string' ? user.user_metadata.full_name : ''} recent={recentHomeActivity} activity={activity} actions={todayActions(workspaceCourses, activity, memory, sessions)} onContinue={() => openMaterial(recentHomeActivity.course.id, recentHomeActivity.material.id)} onAction={action => { const course = courses.find(item => item.id === action.courseId); if (course) openRecommendation(course, action) }} onSession={() => { prepareSession(recentHomeActivity.course, 15, 'weak'); navigate(courseSectionPath(recentHomeActivity.course.id, 'practice')) }} onUpload={() => startMaterialUpload()}/>}
-          {!recentHomeActivity && <div className="hero-card"><div><span className="pill">✦ Tu material. Tu manera de aprender.</span><h2>De tus apuntes a tu próximo <em>logro.</em></h2><p>Sube un PDF y encuentra claridad. Resúmenes, flashcards y preguntas para avanzar a tu ritmo.</p><div className="hero-actions"><button className="primary" onClick={() => startMaterialUpload()}>＋ Subir material</button><button className="secondary" onClick={() => setTab('cursos')}>Ver mis cursos ↗</button></div><div className="hero-caption">ORGANIZA <span>·</span> COMPRENDE <span>·</span> PRACTICA</div></div><div className="hero-study-art" aria-hidden="true"><div className="art-orbit"/><div className="art-sheet art-sheet-back"/><div className="art-sheet"><span>✦ NEXO STUDY</span><h3>Todo empieza<br/>con una idea.</h3><i/><i/><i/><div><b>✓</b> Lista para aprender</div></div><div className="art-tag">✦ De PDF a posibilidades</div></div></div>}
-          {!recentHomeActivity ? <div className="stats-grid"><Stat label="Cursos" value={`${workspaceCourses.length}`} hint="en este espacio"/><Stat label="Materiales" value={`${totalMaterials}`} hint="guardados"/><Stat label="PDF preparados" value={`${aiPreparedMaterials}`} hint="con Nexo IA"/><Stat label="Avance" value={`${currentProgress.percent}%`} hint="de este espacio"/></div> : <p className="home-progress-brief">{workspaceCourses.length} cursos · {totalMaterials} materiales · {currentProgress.percent}% de actividad en este espacio</p>}
-          <section className="panel wide home-courses"><div className="section-head"><div><p className="eyebrow">{workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</p><h3>Tus cursos</h3></div><button className="text-button" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>{workspaceCourses.length ? <div className="course-row">{workspaceCourses.map(course => <button className="course-mini" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales</small></div><b>›</b></button>)}</div> : <div className="workspace-home-empty"><p>Este espacio todavía no tiene cursos. Usa la pestaña del borde derecho para traer uno.</p></div>}</section>
+          {recentHomeActivity && <AdaptiveHome name={identity.fullName} recent={recentHomeActivity} activity={activity} actions={todayActions(workspaceCourses, activity, memory, sessions)} onContinue={() => openMaterial(recentHomeActivity.course.id, recentHomeActivity.material.id)} onAction={action => { const course = courses.find(item => item.id === action.courseId); if (course) openRecommendation(course, action) }} onSession={() => { prepareSession(recentHomeActivity.course, 15, 'weak'); navigate(courseSectionPath(recentHomeActivity.course.id, 'practice')) }} onUpload={() => startMaterialUpload()}/>}
+          {!recentHomeActivity && <div className="hero-card"><div><span className="pill">✦ Tu material. Tu manera de aprender.</span><h2>De tus apuntes a tu próximo <em>logro.</em></h2><p>Sube un PDF y encuentra claridad. Resúmenes, flashcards y preguntas para avanzar a tu ritmo.</p><div className="hero-actions"><button className="primary" onClick={() => startMaterialUpload()}>＋ Subir primer material</button><button className="text-button" onClick={() => setShowCourseForm(true)}>Crear curso</button></div><div className="hero-caption">ORGANIZA <span>·</span> COMPRENDE <span>·</span> PRACTICA</div></div><div className="hero-study-art" aria-hidden="true"><div className="art-orbit"/><div className="art-sheet art-sheet-back"/><div className="art-sheet"><span>✦ NEXO STUDY</span><h3>Todo empieza<br/>con una idea.</h3><i/><i/><i/><div><b>✓</b> Lista para aprender</div></div><div className="art-tag">✦ De PDF a posibilidades</div></div></div>}
+          {!recentHomeActivity ? <div className="stats-grid"><Stat label="Cursos" value={`${workspaceCourses.length}`} hint="en este espacio"/><Stat label="Materiales" value={`${totalMaterials}`} hint="guardados"/><Stat label="PDF preparados" value={`${aiPreparedMaterials}`} hint="con Nexo IA"/><Stat label="Actividad" value={`${currentProgress.percent}%`} hint="de este espacio"/></div> : <p className="home-progress-brief">{workspaceCourses.length} cursos · {totalMaterials} materiales · {currentProgress.percent}% de actividad en este espacio</p>}
+          <section className="panel wide home-courses"><div className="section-head"><div><p className="eyebrow">{workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</p><h3>Tus cursos</h3></div><button className="text-button" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>{workspaceCourses.length ? <div className="course-row">{workspaceCourses.map(course => <button className="course-mini" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} {course.materials.length === 1 ? 'material' : 'materiales'}</small></div><b>›</b></button>)}</div> : <div className="workspace-home-empty"><p>Este espacio todavía no tiene cursos. Crea uno o abre Espacios para organizar los que ya tienes.</p></div>}</section>
         </section>}
 
         {tab === 'cursos' && !route.courseId && <section className="course-library-page">
           <div className="library-intro"><div><p className="eyebrow">Biblioteca · {workspaces.selectedWorkspace.emoji} {workspaces.selectedWorkspace.name}</p><h2>Mis cursos</h2><p>Abre un curso para estudiar sus materiales.</p></div><button className="primary" onClick={() => setShowCourseForm(true)}>+ Nuevo curso</button></div>
-          {workspaceCourses.length ? <div className="course-library-grid">{workspaceCourses.map(course => <button className="course-library-card" key={course.id} onClick={() => openCourse(course.id)}><span>{course.emoji}</span><div><strong>{course.name}</strong><small>{course.materials.length} materiales{course.materials.length ? ` · ${workspaceProgress([course], activity).percent}% de avance` : ''}</small></div><b>Entrar →</b></button>)}</div> : <EmptyState title="Aún no hay cursos aquí" text="Crea uno nuevo o usa la pestaña del borde derecho para traer uno de otro espacio." />}
+          {workspaceCourses.length ? <div className="course-library-grid">{workspaceCourses.map(course => <CourseCard key={course.id} course={course} activity={activity} onOpen={() => openCourse(course.id)} onEdit={() => setAcademicEdit({ course, action: 'edit' })} onMove={() => setAcademicEdit({ course, action: 'move' })}/>)}</div> : <EmptyState title="Aún no hay cursos aquí" text="Crea tu primer curso o abre Espacios para traer uno de otro espacio." action="Crear curso" onClick={() => setShowCourseForm(true)} />}
         </section>}
 
         {tab === 'cursos' && route.courseId && !route.materialId && <section className="course-page">
           {activeCourse ? <>
-            <div className="course-page-hero"><div className="course-page-emoji">{activeCourse.emoji}</div><div><p className="eyebrow">Curso</p><h2>{activeCourse.name}</h2><p>{activeCourse.materials.length} materiales · Cada documento tiene su espacio de aprendizaje.</p></div><button className="primary" onClick={() => startMaterialUpload(activeCourse.id)}>+ Agregar material</button></div>
+            <div className="course-page-hero"><div className="course-page-emoji">{activeCourse.emoji}</div><div><p className="eyebrow">Curso</p><h2>{activeCourse.name}</h2><p>{activeCourse.materials.length} materiales · Cada documento tiene su espacio de aprendizaje.</p></div><button className={route.courseSection === 'materials' ? 'primary' : 'secondary'} onClick={() => startMaterialUpload(activeCourse.id)}>+ Agregar material</button></div>
             <nav className="course-context-nav" aria-label={`Secciones de ${activeCourse.name}`}>{([
-              ['overview', 'Resumen'], ['materials', 'Materiales'], ['ai', 'Nexo IA'], ['library', 'Biblioteca'], ['practice', 'Práctica'], ['progress', 'Progreso'],
+              ['overview', 'Resumen'], ['materials', 'Materiales'], ['ai', 'Nexo'], ['library', 'Biblioteca'], ['practice', 'Práctica'], ['progress', 'Progreso'],
             ] as [CourseSection, string][]).map(([section, label]) => <button key={section} className={(route.courseSection ?? 'overview') === section ? 'active' : ''} aria-current={(route.courseSection ?? 'overview') === section ? 'page' : undefined} onClick={() => navigate(courseSectionPath(activeCourse.id, section))}>{label}</button>)}</nav>
             {(route.courseSection === undefined || route.courseSection === 'overview') && <CourseOverview course={activeCourse} activity={activity} memory={memory} sessions={sessions} onOpenMaterial={materialId => openMaterial(activeCourse.id, materialId)} onUpload={() => startMaterialUpload(activeCourse.id)} onRecommend={recommendation => openRecommendation(activeCourse, recommendation)} onCourseAi={() => navigate(courseSectionPath(activeCourse.id, 'ai'))}/>}
-            {(route.courseSection === undefined || route.courseSection === 'overview' || route.courseSection === 'materials') && (activeCourse.materials.length ? <><div className="section-head"><h3>{route.courseSection === 'materials' ? 'Todos los materiales' : 'Materiales recientes'}</h3></div><div className="materials-grid course-materials-grid">{[...activeCourse.materials].sort((a, b) => (activity[b.id]?.lastStudiedAt ?? b.createdAt).localeCompare(activity[a.id]?.lastStudiedAt ?? a.createdAt)).slice(0, route.courseSection === 'materials' ? undefined : 3).map(material => <button className="material-card" key={material.id} onClick={() => openMaterial(activeCourse.id, material.id)}><div className="material-meta"><span className="file-icon">{material.sourceType === 'pdf' ? 'PDF' : '≡'}</span>{material.pageCount ? <span className="source-badge">{material.pageCount} págs.</span> : null}{material.studyPackMeta?.source === 'nexo-ai' && <span className="ai-ready-badge">✦ IA lista</span>}</div><strong>{displayMaterialTitle(material.title)}</strong><p>{material.analysisStatus === 'reading' ? 'Nexo está leyendo este documento…' : material.analysisStatus === 'partial' ? `${material.analyzedPages?.length ?? 0} páginas preparadas` : material.sourceType === 'pdf' ? 'Documento listo para estudiar' : 'Apuntes listos para estudiar'}</p><small>{activity[material.id]?.lastStudiedAt ? `${materialProgress(studyPackFor(material), activity[material.id], material)}% actividad · ${new Date(activity[material.id].lastStudiedAt!).toLocaleDateString('es-PE')}` : 'Continuar →'}</small></button>)}</div></> : <EmptyState title="Todavía no hay materiales" text="Agrega un PDF o tus apuntes. Nexo aprende del contenido de este curso." action="Agregar material" onClick={() => startMaterialUpload(activeCourse.id)} />)}
+            {(route.courseSection === undefined || route.courseSection === 'overview' || route.courseSection === 'materials') && (activeCourse.materials.length ? <><div className="section-head"><h3>{route.courseSection === 'materials' ? 'Todos los materiales' : 'Materiales recientes'}</h3></div><div className="materials-grid course-materials-grid">{[...activeCourse.materials].sort((a, b) => (activity[b.id]?.lastStudiedAt ?? b.createdAt).localeCompare(activity[a.id]?.lastStudiedAt ?? a.createdAt)).slice(0, route.courseSection === 'materials' ? undefined : 3).map(material => <MaterialCard key={material.id} material={material} onOpen={() => openMaterial(activeCourse.id, material.id)} onRename={() => setAcademicEdit({ course: activeCourse, material, action: 'edit' })} onDownload={material.sourceType === 'pdf' && (pdfFiles[material.id] || material.storagePath) ? () => void downloadMaterial(material) : undefined}/>)}</div></> : <EmptyState title="Todavía no hay materiales" text="Agrega un PDF o tus apuntes. Nexo aprende del contenido de este curso." action="Agregar material" onClick={() => startMaterialUpload(activeCourse.id)} />)}
             {route.courseSection === 'ai' && <CourseAiPage key={`${activeCourse.id}:${courseAiSeed?.solution.id ?? "course"}`} seed={courseAiSeed?.solution.courseId === activeCourse.id ? courseAiSeed : undefined} course={activeCourse} memory={memory} activity={activity} onOpenSource={(materialId, page) => { openMaterial(activeCourse.id, materialId); setSourceJump({ materialId, page }) }}/>}
-            {route.courseSection === 'library' && <CourseLibrary course={activeCourse} solutions={solutionsByCourse[activeCourse.id] ?? []} loading={solutionsLoading} error={solutionsError} onRetry={() => setSolutionRetry(value => value + 1)} onMaterial={id => openMaterial(activeCourse.id, id)} onSolution={setSelectedSolution} onArtifact={(materialId, artifact) => { const page = artifactPage(artifact); if (page) { openMaterial(activeCourse.id, materialId); setSourceJump({ materialId, page, artifactId: artifact.id }); return } const mode = ({ flashcards: 'flashcards', multiple_choice: 'multiple-choice', written_questions: 'written', fill_blanks: 'fill-blanks', notes: 'notes', exam: 'exam' } as Partial<Record<StudyArtifactType, MaterialStudyMode>>)[artifact.type]; navigate(mode ? materialStudyPath(activeCourse.id, materialId, mode) : materialWorkspacePath(activeCourse.id, materialId)) }}/>}
+            {route.courseSection === 'library' && <CourseLibrary course={activeCourse} solutions={solutionsByCourse[activeCourse.id] ?? []} loading={solutionsLoading} error={solutionsError} onRetry={() => setSolutionRetry(value => value + 1)} onMaterial={id => openMaterial(activeCourse.id, id)} onSolution={setSelectedSolution} onArtifact={(materialId, artifact) => openArtifact(activeCourse.id, materialId, artifact.id, artifact.type, artifactPage(artifact))}/>}
             {route.courseSection === 'practice' && <CoursePracticePage course={activeCourse} sessions={sessions.filter(session => session.courseId === activeCourse.id)} onPrepare={(minutes, objective) => prepareSession(activeCourse, minutes, objective)} onComplete={completePracticeStep} onOpenActivity={openPracticeActivity}/>}
             {route.courseSection === 'progress' && <ProgressPage workspace={{ id: activeCourse.id, name: activeCourse.name, emoji: activeCourse.emoji, created_at: '' }} courses={[activeCourse]} activity={activity} memory={memory} sessions={sessions.filter(session => session.courseId === activeCourse.id)} onOpenMaterial={openMaterial} onPractice={(courseId, materialId) => navigate(materialStudyPath(courseId, materialId, 'multiple-choice'))} />}
           </> : <EmptyState title="Curso no encontrado" text="Este curso no existe en este dispositivo." action="Volver a cursos" onClick={() => navigate('/courses')} />}
         </section>}
 
-        {tab === 'resolver' && <ResolverPage key={workspaces.selectedId} workspaceId={workspaces.selectedId} onSave={setSolutionDraft} feedback={<FeedbackWidget context={pathname} inline />} />}
+        {tab === 'resolver' && <ResolverPage key={workspaces.selectedId} workspaceId={workspaces.selectedId} initialThreadId={resolverThreadId} onSave={setSolutionDraft} />}
         {tab === 'corrector' && <CorrectorPage key={workspaces.selectedId} />}
 
         {tab === 'cursos' && route.workspace && activeCourse && activeMaterial && <MaterialWorkspace key={activeMaterial.id} course={activeCourse} material={activeMaterial} localPdf={pdfFiles[activeMaterial.id]} initialPage={sourceJump?.materialId === activeMaterial.id ? sourceJump.page : undefined} onBack={() => navigate(coursePath(activeCourse.id))} onStudy={mode => navigate(materialStudyPath(activeCourse.id, activeMaterial.id, mode))} onRetry={pdfFiles[activeMaterial.id] || activeMaterial.storagePath ? () => void retryPdfMaterial(activeCourse, activeMaterial) : undefined} onAnalyzeMore={pages => analyzeMorePdfPages(activeCourse, activeMaterial, pages)} onVisualAnalysis={(pages, text) => saveVisualAnalysis(activeCourse, activeMaterial, pages, text)} initialArtifactId={sourceJump?.materialId === activeMaterial.id ? sourceJump.artifactId : undefined} onPageArtifact={(page, type) => preparePageArtifact(activeCourse, activeMaterial, page, type)} onRecall={(label, rating) => recordFlashcardRating(activeMaterial.id, label, rating)} onPageReveal={(artifactId, index) => recordActivity(activeMaterial.id, value => ({ ...value, artifactCardsSeen: Array.from(new Set([...(value.artifactCardsSeen ?? []), `${artifactId}:${index}`])) }))} onPageAnswer={(artifactId, label, index, correct) => { recordRecall(activeMaterial.id, label, correct ? 'good' : 'again'); recordActivity(activeMaterial.id, value => ({ ...value, practiceAttempts: { ...value.practiceAttempts, [`page:${artifactId}:${index}`]: correct } })); recordSessionEvent('quiz_answer', activeMaterial.id, { correct }) }}/>}
@@ -1076,18 +1104,24 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
         </Suspense>
       </main>
 
-      <nav className="mobile-nav" aria-label="Navegación móvil">
-        <NavButton icon="⌂" label="Inicio" active={tab === 'inicio'} onClick={() => setTab('inicio')}/>
-        <NavButton icon="▦" label="Cursos" active={tab === 'cursos'} onClick={() => setTab('cursos')}/>
-        <NavButton icon="⌁" label="Resolver" active={tab === 'resolver'} onClick={() => setTab('resolver')}/>
-        <NavButton icon="✎" label="Corrector" active={tab === 'corrector'} onClick={() => setTab('corrector')}/>
-        <NavButton icon="↗" label="Progreso" active={tab === 'progreso'} onClick={() => setTab('progreso')}/>
-      </nav>
+      <Suspense fallback={<p role="status" className="utility-loading">Abriendo…</p>}>
 
-      {showGlobalSearch && <GlobalSearch userId={user.id} courses={courses} onClose={() => setShowGlobalSearch(false)} onCourse={id => { setShowGlobalSearch(false); openCourse(id) }} onMaterial={(courseId, materialId, page) => { setShowGlobalSearch(false); openMaterial(courseId, materialId); if (page) setSourceJump({ materialId, page }) }} onSolution={(id, courseId) => { setShowGlobalSearch(false); void openSavedSolution(id, courseId) }} onUpload={() => { setShowGlobalSearch(false); startMaterialUpload() }} onResolver={() => { setShowGlobalSearch(false); setTab('resolver') }}/>}
+      {showGlobalSearch && <GlobalSearch userId={user.id} workspaceId={workspaces.selectedId} courses={courses} onArtifact={(...args) => { setShowGlobalSearch(false); openArtifact(...args) }} onConversation={id => { setShowGlobalSearch(false); setResolverThreadId(id); setTab('resolver') }} onClose={() => setShowGlobalSearch(false)} onCourse={id => { setShowGlobalSearch(false); openCourse(id) }} onMaterial={(courseId, materialId, page) => { setShowGlobalSearch(false); openMaterial(courseId, materialId); if (page) setSourceJump({ materialId, page }) }} onSolution={(id, courseId) => { setShowGlobalSearch(false); void openSavedSolution(id, courseId) }} onUpload={() => { setShowGlobalSearch(false); startMaterialUpload() }} onResolver={() => { setShowGlobalSearch(false); setTab('resolver') }}/>}
       {solutionDraft && <SaveSolutionDialog courses={courses} draft={solutionDraft} onClose={() => setSolutionDraft(null)} onCreateCourse={name => createCourse(name, '📘', true)} onSave={async (course, draft) => { await saveCourses(user.id, [{ ...course, materials: [] }]); return saveSolution(user.id, course.id, draft) }} onSaved={solution => { setSolutionDraft(null); setSolutionsByCourse(current => ({ ...current, [solution.courseId]: [solution, ...(current[solution.courseId] ?? []).filter(item => item.id !== solution.id)] })); navigate(courseSectionPath(solution.courseId, 'library')); setSelectedSolution(solution) }}/>}
       {selectedSolution && courses.some(course => course.id === selectedSolution.courseId) && <SavedSolutionDialog solution={selectedSolution} course={courses.find(course => course.id === selectedSolution.courseId)!} onClose={() => setSelectedSolution(null)} onDeleted={() => { setSolutionsByCourse(current => ({ ...current, [selectedSolution.courseId]: (current[selectedSolution.courseId] ?? []).filter(item => item.id !== selectedSolution.id) })); setSelectedSolution(null) }} onAsk={askSavedSolution}/>}
-      {showSettings && <Modal title="Configuración" onClose={() => setShowSettings(false)}><p>{user.user_metadata?.full_name || 'Estudiante Nexo'}</p><p>{user.email}</p><label><input type="checkbox" checked={sidebarCollapsed} onChange={event => setSidebarCollapsed(event.target.checked)}/> Usar barra lateral compacta en escritorio</label><button className="secondary" onClick={() => setShowSettings(false)}>Listo</button></Modal>}
+      {academicEdit && <AcademicItemDialog item={academicEdit} workspaces={[{ id: GENERAL_WORKSPACE, name: 'General', emoji: '🏠', created_at: '' }, ...workspaces.folders]} currentWorkspace={workspaceForCourse(academicEdit.course.id, workspaces.memberships)} onClose={() => setAcademicEdit(null)} onSave={async (name, emoji, workspaceId) => {
+        if (academicEdit.action === 'move') { await workspaces.moveCourse(academicEdit.course.id, workspaceId); workspaces.setSelectedId(workspaceId); navigate('/courses'); return }
+        const course = courses.find(course => course.id === academicEdit.course.id)
+        if (!course) throw new Error('Course missing')
+        const next = academicEdit.material ? { ...course, materials: course.materials.map(material => material.id === academicEdit.material!.id ? { ...material, title: name } : material) } : { ...course, name, emoji }
+        if (remoteEnabled) {
+          if (academicEdit.material) await renameMaterial(user.id, course.id, academicEdit.material.id, name)
+          else await saveCourses(user.id, [{ ...next, materials: [] }])
+        }
+        setCourses(current => current.map(course => course.id !== next.id ? course : academicEdit.material ? { ...course, materials: course.materials.map(material => material.id === academicEdit.material!.id ? { ...material, title: name } : material) } : { ...course, name, emoji }))
+      }}/>}
+      {utility === 'feedback' && <FeedbackDialog context={pathname} onClose={() => setUtility(null)}/>}
+      {utility && !['feedback', 'admin', 'logout'].includes(utility) && <AccountUtilities key={utility} mode={utility} identity={identity} userId={user.id} onClose={() => setUtility(null)} onName={onName} collapsed={sidebarCollapsed} onCollapsed={setSidebarCollapsed} reducedMotion={reducedMotion} onReducedMotion={setReducedMotion} remoteEnabled={remoteEnabled} onRetry={retrySynchronization}/>}
       {showCourseForm && <Modal title={`Nuevo curso · ${workspaces.selectedWorkspace.name}`} onClose={() => { setShowCourseForm(false); setResumeUploadAfterCourse(false) }}><div className="course-emoji-preview"><span>{courseEmoji}</span><div><strong>Un curso para {workspaces.selectedWorkspace.name}</strong><small>Quedará dentro de este espacio y su avance se medirá aquí.</small></div></div><div className="course-emoji-picker">{['📘','🧠','🧪','🩺','🦷','📐','⚛️','💻','📚','🌎','⚖️','💹','🧬','🔬','🎨','🎯'].map(emoji => <button key={emoji} className={courseEmoji === emoji ? 'active' : ''} onClick={() => setCourseEmoji(emoji)}>{emoji}</button>)}</div><label>Nombre del curso<input autoFocus value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Ej. Histología" onKeyDown={e => e.key === 'Enter' && addCourse()} /></label>{courseError && <div role="alert" className="auth-alert error">{courseError}</div>}<div className="modal-actions"><button className="secondary" onClick={() => { setShowCourseForm(false); setResumeUploadAfterCourse(false) }}>Cancelar</button><button className="primary" disabled={courseBusy || !courseName.trim()} onClick={addCourse}>{courseBusy ? 'Creando…' : 'Crear curso'}</button></div></Modal>}
 
       {showMaterialForm && <Modal title="Agregar material" onClose={() => { setShowMaterialForm(false); resetMaterialForm() }} wide>
@@ -1106,14 +1140,13 @@ function StudyApp({ user, signOut }: { user: User; signOut: () => Promise<void> 
           <div className="modal-actions"><button className="secondary" onClick={() => { setShowMaterialForm(false); resetMaterialForm() }}>Cancelar</button><button className="primary" disabled={!materialTitle.trim() || (!pendingUploadFile && !materialText.trim()) || (pendingUploadFile !== null && !/\.pdf$/i.test(pendingUploadFile.name) && !materialText.trim())} onClick={() => void addMaterial()}>Guardar y abrir material</button></div>
         </div>}
       </Modal>}
-      {tab !== 'resolver' && <FeedbackWidget context={pathname} />}
+      </Suspense>
     </div>
   )
 }
 
 function NavButton({ icon, label, active, onClick }: { icon: string; label: string; active: boolean; onClick: () => void }) { return <button className={`nav-button ${active ? 'active' : ''}`} title={label} aria-label={label} aria-current={active ? 'page' : undefined} onClick={onClick}><Icon name={icon}/><span className="nav-label">{label}</span></button> }
 function Stat({ label, value, hint }: { label: string; value: string; hint: string }) { return <div className="stat-card"><p>{label}</p><strong>{value}</strong><small>{hint}</small></div> }
-function EmptyState({ title, text, action, onClick }: { title: string; text: string; action?: string; onClick?: () => void }) { return <div className="empty-state"><span>✦</span><h3>{title}</h3><p>{text}</p>{action && onClick && <button className="primary" onClick={onClick}>{action}</button>}</div> }
 
 function ArtifactGate({ name, status, onGenerate }: { name: string; status?: StudyArtifact['status']; onGenerate: () => void }) {
   return <div className="artifact-gate"><span>✦</span><h3>{status === 'processing' ? `Nexo está preparando ${name}` : status === 'failed' ? `No pudimos preparar ${name}` : `Todavía no hay ${name}`}</h3><p>{status === 'processing' ? 'Puedes volver al documento mientras Nexo trabaja. El resultado se guardará para la próxima vez.' : 'Nexo utilizará fragmentos de este material y guardará el resultado para reutilizarlo.'}</p>{status !== 'processing' && <button className="primary" onClick={onGenerate}>{status === 'failed' ? 'Reintentar' : `Generar ${name} con Nexo`}</button>}</div>
@@ -1139,5 +1172,5 @@ function TutorView({ material }: { material: Material }) {
 }
 
 function Modal({ title, onClose, children, wide = false }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) { return <Dialog title={title} onClose={onClose} className={`modal ${wide ? 'wide-modal' : ''}`}><div className="modal-head"><h2>{title}</h2><button aria-label="Cerrar diálogo" onClick={onClose}>×</button></div>{children}</Dialog> }
-function tabTitle(tab: AppTab) { const hour = new Date().getHours(); return ({ inicio: `${hour < 12 ? 'Buenos días' : hour < 19 ? 'Buenas tardes' : 'Buenas noches'} 👋`, cursos: 'Mis cursos', resolver: 'Resolver con Nexo IA', corrector: 'Corrector de trabajos', progreso: 'Tu progreso' } as const)[tab] }
+function tabTitle(tab: AppTab) { return ({ inicio: 'Inicio', cursos: 'Mis cursos', resolver: 'Resolver con Nexo IA', corrector: 'Corrector de trabajos', progreso: 'Tu progreso' } as const)[tab] }
 export default App

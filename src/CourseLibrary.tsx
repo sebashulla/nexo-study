@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Course, SavedSolution, StudyArtifact } from './types'
 import { artifactPage } from './lib/artifactPrompts'
+import { EmptyState } from './EmptyState'
 
 const filters = ['Todo', 'Materiales', 'Apuntes', 'Flashcards', 'Práctica', 'Exámenes', 'Soluciones'] as const
 const labels = { summary: 'Resumen', flashcards: 'Flashcards', multiple_choice: 'Opción múltiple', written_questions: 'Preguntas escritas', fill_blanks: 'Completar espacios', notes: 'Apuntes', exam: 'Simulacro' }
@@ -26,6 +27,6 @@ export function CourseLibrary({ course, solutions, loading, error, onRetry, onMa
     {selected.map(({ material, artifact }) => <button className="library-entry secondary" key={artifact.id} onClick={() => onArtifact(material.id, artifact)}><strong>{labels[artifact.type]}</strong><span>{material.title}{artifactPage(artifact) ? ` · Página ${artifactPage(artifact)}` : ''}</span></button>)}
     {showSolutions && solutions.map(solution => <button className="library-entry secondary" key={solution.id} onClick={() => onSolution(solution)}><strong>{solution.question}</strong><span>Solución · {solution.category} · {solution.attachments.length} imágenes · {new Date(solution.createdAt).toLocaleDateString('es-PE')}</span></button>)}
     {loading && <p role="status">Cargando soluciones…</p>}
-    {!loading && empty && <p>No hay recursos en este filtro todavía. Guarda soluciones desde Resolver o prepara métodos desde un material.</p>}
+    {!loading && empty && <EmptyState title="Aún no hay recursos en este filtro" text="Guarda soluciones desde Resolver o prepara métodos desde un material para encontrarlos aquí."/>}
   </div>
 }

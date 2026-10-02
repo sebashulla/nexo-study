@@ -3,20 +3,26 @@ import { test, expect, type Page } from '@playwright/test'
 // Only simulated auth responses: never create accounts or send real emails.
 const user = { id: '12345678-1234-4234-8234-123456789012', aud: 'authenticated', role: 'authenticated', email: 'estudiante@example.com', user_metadata: { full_name: 'Estudiante Nexo' }, app_metadata: {}, created_at: '2026-01-01T00:00:00Z' }
 const session = { access_token: 'test-access-token', refresh_token: 'test-refresh-token', token_type: 'bearer', expires_in: 3600, user }
+const corsHeaders = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+  'access-control-allow-headers': 'authorization, apikey, content-type, x-client-info, prefer, accept-profile, content-profile',
+}
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/auth/v1/**', async route => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: corsHeaders })
     const url = new URL(route.request().url())
     if (url.pathname.endsWith('/token')) {
       const body = route.request().postDataJSON()
-      if (body.password === 'incorrecta') return route.fulfill({ status: 400, json: { code: 'invalid_credentials', msg: 'Invalid login credentials' } })
-      return route.fulfill({ json: session })
+      if (body.password === 'incorrecta') return route.fulfill({ status: 400, headers: corsHeaders, json: { code: 'invalid_credentials', msg: 'Invalid login credentials' } })
+      return route.fulfill({ headers: corsHeaders, json: session })
     }
-    if (url.pathname.endsWith('/user')) return route.fulfill({ json: user })
-    if (url.pathname.endsWith('/signup')) return route.fulfill({ json: { ...user, identities: [{ id: user.id }] } })
-    return route.fulfill({ json: {} })
+    if (url.pathname.endsWith('/user')) return route.fulfill({ headers: corsHeaders, json: user })
+    if (url.pathname.endsWith('/signup')) return route.fulfill({ headers: corsHeaders, json: { ...user, identities: [{ id: user.id }] } })
+    return route.fulfill({ headers: corsHeaders, json: {} })
   })
-  await page.route('**/rest/v1/**', route => route.fulfill({ json: route.request().url().includes('is_username_available') ? true : [] }))
+  await page.route('**/rest/v1/**', route => route.fulfill({ headers: corsHeaders, ...(route.request().method() === 'OPTIONS' ? { status: 204 } : { json: route.request().url().includes('is_username_available') ? true : [] }) }))
 })
 
 async function login(page: Page) {
@@ -100,7 +106,7 @@ test('login: validation, password visibility, error, session persistence and sig
   await page.reload()
   await expect(page.getByRole('button', { name: 'Mi cuenta' })).toBeVisible()
   await page.getByRole('button', { name: 'Mi cuenta' }).click()
-  await page.getByRole('button', { name: 'Cerrar sesión' }).click()
+  await page.getByRole('menuitem', { name: 'Cerrar sesión' }).click()
   await expect(page.getByRole('heading', { name: 'Qué bueno verte.' })).toBeVisible()
 })
 
@@ -136,10 +142,16 @@ test('course study and main routes fit the viewport with one workspace explorer'
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   await login(page)
+  // Check route layouts within the app. Hard reloads abort queued saves in WebKit's
+  // synthetic cross-origin backend; session/reload coverage remains in the auth tests.
+  const visit = (path: string) => page.evaluate(target => {
+    window.history.pushState({}, '', target)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  }, path)
   await expect(page.locator('.app-loading')).toHaveCount(0)
   await page.screenshot({ path: info.outputPath('home.png'), fullPage: true })
   for (const route of ['/courses', '/courses/course-bio/materials/mat-cell', '/resolver', '/corrector', '/progress']) {
-    await page.goto(route)
+    await visit(route)
     await expect(page.getByRole('button', { name: 'Mi cuenta' })).toBeVisible()
     await expect(page.locator('.app-loading')).toHaveCount(0)
     await noOverflow(page)
@@ -147,26 +159,26 @@ test('course study and main routes fit the viewport with one workspace explorer'
   }
   await expect(page.locator('.sidebar nav').getByRole('button', { name: 'Espacios', includeHidden: true })).toHaveCount(0)
   await expect(page.locator('.sidebar nav').getByRole('button', { name: 'Estudiar', includeHidden: true })).toHaveCount(0)
-  await page.getByRole('button', { name: /Cambiar espacio de estudio/ }).click()
+  await page.getByRole('button', { name: page.viewportSize()!.width <= 700 ? /Cambiar espacio desde el contexto/ : /Cambiar espacio de estudio/ }).click()
   await expect(page.getByRole('dialog', { name: 'Explorador de espacios' })).toBeVisible()
   await noOverflow(page)
   await page.screenshot({ path: info.outputPath('explorer.png'), fullPage: true })
   await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
-  await page.goto('/folders')
+  await visit('/folders')
   await expect(page).toHaveURL(/\/courses$/)
   await expect(page.getByRole('dialog', { name: 'Explorador de espacios' })).toBeVisible()
   await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
-  await page.goto('/study')
+  await visit('/study')
   await expect(page).toHaveURL(/\/courses$/)
   if (page.viewportSize()!.width <= 700) {
-    const nav = page.getByRole('navigation', { name: 'Navegación móvil' })
-    await expect(nav).toBeVisible()
-    await expect(nav.getByRole('button', { name: 'Espacios' })).toHaveCount(0)
-    await expect(nav.getByRole('button', { name: 'Estudiar' })).toHaveCount(0)
-    await nav.getByRole('button', { name: 'Corrector' }).click()
-    await expect(page).toHaveURL(/\/corrector$/)
-    await nav.getByRole('button', { name: 'Progreso' }).click()
-    await expect(page).toHaveURL(/\/progress$/)
+    await expect(page.getByRole('navigation', { name: 'Navegación móvil' })).toHaveCount(0)
+    for (const target of ['Corrector', 'Progreso']) {
+      await page.getByRole('button', { name: 'Abrir navegación' }).click()
+      await page.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button', { name: target }).click()
+      await expect(page).toHaveURL(target === 'Corrector' ? /\/corrector$/ : /\/progress$/)
+    }
+    await page.getByRole('button', { name: 'Abrir navegación' }).click()
+    const nav = page.getByRole('navigation', { name: 'Navegación principal' })
     for (const button of await nav.getByRole('button').all()) {
       const box = (await button.boundingBox())!
       expect(box.width).toBeGreaterThanOrEqual(44)
@@ -210,14 +222,15 @@ test('create a course and material, study it, and use accessible scrollable dial
   await page.locator('.flashcard').click()
   await expect(page.locator('.flashcard')).toContainText('RESPUESTA')
   await page.screenshot({ path: info.outputPath('flashcard.png'), fullPage: true })
-  await page.getByRole('button', { name: 'Enviar retroalimentación' }).click()
+  await page.getByRole('button', { name: 'Mi cuenta' }).click()
+  await page.getByRole('menuitem', { name: 'Enviar comentarios' }).click()
   dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
   await noOverflow(page)
   await page.screenshot({ path: info.outputPath('feedback.png'), fullPage: true })
   await page.keyboard.press('Escape')
   await expect(dialog).not.toBeVisible()
-  await expect(page.getByRole('button', { name: 'Enviar retroalimentación' })).toBeFocused()
+  await expect(page.getByRole('button', { name: 'Mi cuenta' })).toBeFocused()
 })
 
 test('signup wizard: required choices, back navigation and confirmation email state', async ({ page }) => {

@@ -31,17 +31,7 @@ test('Resolver behaves as a conversation with thinking stages, follow-up context
   await login(page)
   await expect(page.getByRole('heading', { name: page.viewportSize()!.width <= 700 ? 'Resolver' : 'Resolver con Nexo IA', exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Nuevo chat' })).toHaveCount(0)
-  const feedback = page.getByRole('button', { name: 'Enviar retroalimentación' })
-  await expect(feedback).toHaveCount(1)
-  await expect(feedback).toBeVisible()
-  const feedbackBounds = await feedback.boundingBox()
-  const sendBounds = await page.getByRole('button', { name: 'Enviar pregunta' }).boundingBox()
-  expect(feedbackBounds && sendBounds && (
-    feedbackBounds.x + feedbackBounds.width <= sendBounds.x ||
-    sendBounds.x + sendBounds.width <= feedbackBounds.x ||
-    feedbackBounds.y + feedbackBounds.height <= sendBounds.y ||
-    sendBounds.y + sendBounds.height <= feedbackBounds.y
-  )).toBeTruthy()
+  await expect(page.locator('.feedback-fab')).toHaveCount(0)
   if (page.viewportSize()!.width <= 700) await expect(page.getByRole('textbox', { name: 'Escribe tu pregunta' })).toBeInViewport()
   await page.screenshot({ path: info.outputPath('resolver-empty.png') })
   await page.getByRole('group', { name: 'Materia' }).getByRole('button', { name: 'Matemáticas' }).click()
@@ -65,7 +55,7 @@ test('Resolver behaves as a conversation with thinking stages, follow-up context
   await page.reload()
   await expect(page.locator('.solver-assistant-bubble')).toHaveCount(2)
   await page.getByRole('button', { name: 'Nuevo chat' }).click()
-  await expect(page.getByRole('heading', { name: '¿Por dónde empezamos?' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '¿Qué quieres resolver?' })).toBeVisible()
   if (page.viewportSize()!.width <= 700) await page.getByRole('button', { name: 'Mostrar conversaciones' }).click()
   await page.getByRole('button', { name: /¿Cuánto es 2 \+ 2\?/ }).click()
   await expect(page.locator('.solver-assistant-bubble')).toHaveCount(2)

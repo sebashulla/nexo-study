@@ -53,18 +53,12 @@ async function login(page: Page) {
   await page.getByLabel('Correo electrónico', { exact: true }).fill(user.email)
   await page.getByLabel('Contraseña', { exact: true }).fill('UnaClave123!')
   await page.getByRole('button', { name: 'Iniciar sesión' }).click()
-  await expect(page.getByRole('button', { name: /Cambiar espacio de estudio/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Mi cuenta' })).toBeVisible()
 }
 
 async function openWorkspace(page: Page) {
-  const trigger = page.getByRole('button', { name: /Cambiar espacio de estudio/ })
-  if (page.viewportSize()!.width > 700) {
-    await expect(trigger).toBeVisible()
-    if (await trigger.getAttribute('aria-expanded') !== 'true') await trigger.click()
-    return
-  }
-  await page.getByRole('button', { name: 'Abrir navegación' }).click()
-  await page.getByRole('dialog', { name: 'Barra lateral principal' }).getByRole('button', { name: /^Espacio ·/ }).click()
+  const trigger = page.viewportSize()!.width > 700 ? page.getByRole('button', { name: /Cambiar espacio de estudio/ }) : page.getByRole('button', { name: /Cambiar espacio desde el contexto/ })
+  if (!await page.getByRole('dialog', { name: 'Explorador de espacios' }).isVisible()) await trigger.click()
 }
 
 async function switchTo(page: Page, name: string) {
@@ -78,7 +72,7 @@ async function createWorkspace(page: Page, name: string) {
   await page.getByRole('button', { name: 'Nuevo espacio' }).click()
   await page.getByRole('textbox', { name: 'Nombre del espacio' }).fill(name)
   await page.getByRole('button', { name: 'Crear espacio', exact: true }).click()
-  await expect(page.locator('.workspace-edge-trigger')).toHaveAttribute('aria-label', `Cambiar espacio de estudio. Actual: ${name}`)
+  await expect(page.locator('.workspace-context-trigger')).toHaveAttribute('aria-label', `Cambiar espacio de estudio. Actual: ${name}`)
   await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
 }
 
@@ -93,17 +87,17 @@ test('a workspace owns new courses and restores the selected world after reload'
   await dialog.getByRole('button', { name: 'Crear curso' }).click()
   await expect(page.getByRole('heading', { name: 'Histología clínica' }).first()).toBeVisible()
   await page.goto('/courses')
-  await expect(page.getByRole('button', { name: /Histología clínica/ })).toBeVisible()
+  await expect(page.locator('.course-library-card').filter({ hasText: 'Histología clínica' })).toBeVisible()
   await page.screenshot({ path: info.outputPath('own-courses.png'), fullPage: true })
   await switchTo(page, 'General')
-  await expect(page.getByRole('button', { name: /Histología clínica/ })).toHaveCount(0)
+  await expect(page.locator('.course-library-card').filter({ hasText: 'Histología clínica' })).toHaveCount(0)
   await page.goto('/courses')
-  await expect(page.getByRole('button', { name: /Biología/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Histología clínica/ })).toHaveCount(0)
+  await expect(page.locator('.course-library-card').filter({ hasText: 'Biología' })).toBeVisible()
+  await expect(page.locator('.course-library-card').filter({ hasText: 'Histología clínica' })).toHaveCount(0)
   await switchTo(page, 'Ciclo clínico')
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Cambiar espacio de estudio. Actual: Ciclo clínico' })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Histología clínica/ })).toBeVisible()
+  await expect(page.locator('.workspace-context-trigger')).toHaveAttribute('aria-label', 'Cambiar espacio de estudio. Actual: Ciclo clínico')
+  await expect(page.locator('.course-library-card').filter({ hasText: 'Histología clínica' })).toBeVisible()
   await switchTo(page, 'General')
   await page.goto('/courses')
   const folderCourse = await page.evaluate(userId => {
@@ -111,7 +105,7 @@ test('a workspace owns new courses and restores the selected world after reload'
     return JSON.parse(raw || '[]').find((course: { name: string }) => course.name === 'Histología clínica')?.id
   }, user.id)
   await page.goto(`/courses/${folderCourse}`)
-  await expect(page.getByRole('button', { name: 'Cambiar espacio de estudio. Actual: Ciclo clínico' })).toBeVisible()
+  await expect(page.locator('.workspace-context-trigger')).toHaveAttribute('aria-label', 'Cambiar espacio de estudio. Actual: Ciclo clínico')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBeTruthy()
 })
 
@@ -127,7 +121,7 @@ test('moving a course transfers its real progress and deleting the workspace ret
   const originalProgress = Number((await page.locator('.progress-overall strong').textContent())?.replace('%', ''))
   expect(originalProgress).toBeGreaterThan(0)
   await createWorkspace(page, 'Exámenes')
-  await page.getByRole('button', { name: /Cambiar espacio de estudio/ }).click()
+  await openWorkspace(page)
   await page.getByRole('button', { name: 'Traer curso' }).first().click()
   await page.locator('.spaces-bring').getByRole('button', { name: /Biología/ }).click()
   await expect(page.locator('.explorer-course-open').filter({ hasText: 'Biología' })).toBeVisible()
@@ -143,17 +137,17 @@ test('moving a course transfers its real progress and deleting the workspace ret
   await page.screenshot({ path: info.outputPath('space-progress.png'), fullPage: true })
   await switchTo(page, 'General')
   await page.goto('/courses')
-  await expect(page.getByRole('button', { name: /Biología/ })).toHaveCount(0)
+  await expect(page.locator('.course-library-card').filter({ hasText: 'Biología' })).toHaveCount(0)
   await page.goto('/progress')
   await expect(page.locator('.progress-overall strong')).toHaveText('0%')
   await switchTo(page, 'Exámenes')
-  await page.getByRole('button', { name: /Cambiar espacio de estudio/ }).click()
+  await openWorkspace(page)
   page.once('dialog', dialog => dialog.accept())
   await page.getByRole('button', { name: 'Eliminar espacio' }).click()
-  await expect(page.getByRole('button', { name: 'Cambiar espacio de estudio. Actual: General' })).toBeVisible()
+  await expect(page.locator('.workspace-context-trigger')).toHaveAttribute('aria-label', 'Cambiar espacio de estudio. Actual: General')
   await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
   await page.goto('/courses')
-  await expect(page.getByRole('button', { name: /Biología/ })).toBeVisible()
+  await expect(page.locator('.course-library-card').filter({ hasText: 'Biología' })).toBeVisible()
   await page.goto('/progress')
   expect(Number((await page.locator('.progress-overall strong').textContent())?.replace('%', ''))).toBe(originalProgress)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBeTruthy()
@@ -182,7 +176,7 @@ test('an unavailable workspace catalog never mixes courses into General', async 
   await page.getByLabel('Contraseña', { exact: true }).fill('UnaClave123!')
   await page.getByRole('button', { name: 'Iniciar sesión' }).click()
   await expect(page.getByText('No pudimos cargar tus espacios', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Biología/ })).toHaveCount(0)
+  await expect(page.locator('.course-library-card').filter({ hasText: 'Biología' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Reintentar' })).toBeVisible()
 })
 

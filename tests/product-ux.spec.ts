@@ -20,7 +20,7 @@ async function signIn(page: Page) {
 
 test('Home upload asks for a course and confirms an editable title before saving', async ({ page }) => {
   await signIn(page)
-  await page.getByRole('button', { name: /Subir material/ }).first().click()
+  await page.getByRole('button', { name: /Subir (primer )?material/ }).first().click()
   let dialog = page.getByRole('dialog')
   await expect(dialog).toContainText('¿Dónde quieres guardarlo?')
   await dialog.getByRole('button', { name: /Crear nuevo curso/ }).click()
@@ -82,7 +82,7 @@ test('global search opens a topic in its material and page', async ({ page }) =>
   await expect(page.getByRole('button', { name: 'Mi cuenta' })).toBeVisible()
   await page.keyboard.press('Control+k')
   const dialog = page.getByRole('dialog', { name: 'Buscar en Nexo Study' })
-  await dialog.getByRole('textbox', { name: 'Buscar en Nexo Study' }).fill('necrosis')
+  await dialog.getByRole('combobox', { name: 'Buscar en Nexo Study' }).fill('necrosis')
   await dialog.locator('.global-search-results button').filter({ hasText: 'Necrosis celular' }).last().click()
   await expect(page).toHaveURL(/\/courses\/course-search\/materials\/mat-search\/workspace$/)
   await expect(page.locator('.material-workspace-head')).toContainText('Página 3')

@@ -7,15 +7,15 @@ import { Icon } from './Icon'
 type FeedbackType = 'idea' | 'bug' | 'experience' | 'other'
 
 const types: { value: FeedbackType; icon: string; label: string }[] = [
-  { value: 'idea', icon: 'idea', label: 'Idea' },
-  { value: 'bug', icon: 'bug', label: 'Algo falló' },
+  { value: 'idea', icon: 'idea', label: 'Sugerencia' },
+  { value: 'bug', icon: 'bug', label: 'Problema' },
   { value: 'experience', icon: '✦', label: 'Experiencia' },
   { value: 'other', icon: 'chat', label: 'Otro' },
 ]
 
-export function FeedbackWidget({ context, inline = false }: { context: string; inline?: boolean }) {
+export function FeedbackDialog({ context, onClose }: { context: string; onClose: () => void }) {
   const { user } = useAuth()
-  const [open, setOpen] = useState(false)
+  const [includeContext, setIncludeContext] = useState(false)
   const [kind, setKind] = useState<FeedbackType>('idea')
   const [rating, setRating] = useState(5)
   const [message, setMessage] = useState('')
@@ -28,7 +28,7 @@ export function FeedbackWidget({ context, inline = false }: { context: string; i
   }
 
   const close = () => {
-    setOpen(false)
+    onClose()
     reset()
   }
 
@@ -41,8 +41,8 @@ export function FeedbackWidget({ context, inline = false }: { context: string; i
       feedback_type: kind,
       rating,
       message: message.trim(),
-      page_context: context,
-      user_agent: navigator.userAgent.slice(0, 500),
+      page_context: includeContext ? context : null,
+      user_agent: includeContext ? navigator.userAgent.slice(0, 500) : null,
     })
     if (insertError) {
       setError(insertError.message.includes('feedback_entries')
@@ -55,19 +55,17 @@ export function FeedbackWidget({ context, inline = false }: { context: string; i
     finally { setBusy(false) }
   }
 
-  return <>
-    <button className={`feedback-fab ${inline ? 'inline-feedback' : ''}`} onClick={event => { event.currentTarget.focus(); setOpen(true) }} aria-label="Enviar retroalimentación"><span><Icon name="chat"/></span><b>Feedback</b></button>
-    {open && <Dialog title="Ayúdanos a mejorar Nexo" className="feedback-modal" onClose={close}>
+  return <Dialog title="¿Qué podríamos mejorar?" className="feedback-modal" onClose={close}>
         <button className="feedback-close" onClick={close} aria-label="Cerrar">×</button>
         {!sent ? <>
-          <div className="feedback-heading"><span className="feedback-spark">✦</span><div><p className="eyebrow">Nexo Study · Beta</p><h2>Ayúdanos a mejorar Nexo</h2><p>Cuéntanos qué te gustó, qué falló o qué te gustaría encontrar aquí.</p></div></div>
+          <div className="feedback-heading"><div><h2>¿Qué podríamos mejorar?</h2><p>Cuéntanos qué te gustó, qué falló o qué te gustaría encontrar aquí.</p></div></div>
           <div className="feedback-type-grid">{types.map(item => <button key={item.value} className={kind === item.value ? 'active' : ''} onClick={() => setKind(item.value)}><span><Icon name={item.icon}/></span>{item.label}</button>)}</div>
           <div className="feedback-rating"><span>¿Cómo fue tu experiencia?</span><div>{[1,2,3,4,5].map(value => <button key={value} aria-label={`${value} ${value === 1 ? 'estrella' : 'estrellas'}`} aria-pressed={value === rating} className={value <= rating ? 'active' : ''} onClick={() => setRating(value)}>★</button>)}</div></div>
-          <label className="feedback-message">Tu comentario<textarea autoFocus rows={6} maxLength={4000} value={message} onChange={event => setMessage(event.target.value)} placeholder="Ej. Me gustaría poder convertir una clase completa en preguntas de examen…" /><small>{message.length}/4000</small></label>
+          <label className="feedback-message">Tu comentario<textarea autoFocus rows={4} maxLength={4000} value={message} onChange={event => setMessage(event.target.value)} placeholder="Describe el problema o tu sugerencia…" /><small>{message.length}/4000</small></label>
+          <label className="utility-check"><input type="checkbox" checked={includeContext} onChange={event => setIncludeContext(event.target.checked)}/> Incluir información técnica de esta pantalla</label>
           {error && <div role="alert" className="auth-alert error">{error}</div>}
           <button className="primary feedback-send" disabled={busy || message.trim().length < 5} onClick={submit}>{busy ? 'Enviando…' : 'Enviar comentario →'}</button>
           <p className="feedback-privacy">Tu comentario queda asociado a tu cuenta para poder entender mejor el contexto de la beta.</p>
         </> : <div className="feedback-success"><div>✓</div><h2>¡Gracias!</h2><p>Tu comentario ya quedó guardado. Esto nos ayuda a decidir qué mejorar primero.</p><button className="primary" onClick={close}>Volver a Nexo</button></div>}
-    </Dialog>}
-  </>
+    </Dialog>
 }
