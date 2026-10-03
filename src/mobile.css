@@ -1,0 +1,127 @@
+/* V0.9.5: phone presentation shares the existing tasks, palette and academic state. */
+.sidebar-top .brand { min-height: 44px; }
+.sidebar-top .brand-wordmark-image { width: 136px; max-width: 100%; }
+.sidebar-beta { left: 4px; }
+.study-browse-shell, .study-browse-content { display: contents; }
+.study-focus-shell { position: fixed; z-index: 90; top: var(--nexo-viewport-top, 0px); left: 0; width: 100%; height: var(--nexo-viewport-height, 100dvh); display: flex; flex-direction: column; background: var(--bg); padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.study-focus-header { display: flex; align-items: center; gap: 8px; flex-shrink: 0; min-height: 64px; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.study-focus-header h2 { flex: 1; min-width: 0; margin: 0; font-size: 16px; line-height: 1.4; }
+.study-focus-header button { min-width: 44px; min-height: 44px; }
+.study-focus-counter { flex-shrink: 0; font-size: 13px; color: var(--muted); }
+.study-focus-content { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 16px; scroll-padding: 16px; }
+.mobile-action-sheet.nexo-dialog { position: fixed; inset: auto 0 0; margin: 0; width: 100%; max-width: none; max-height: min(80dvh, var(--nexo-viewport-height, 100dvh)); border-radius: 20px 20px 0 0; padding: 24px max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+.mobile-action-sheet h2 { font-size: 18px; margin: 0 0 16px; }
+.mobile-action-sheet .account-menu { position: static; width: 100%; max-width: none; max-height: none; border: 0; padding: 0; box-shadow: none; animation: none; margin-bottom: 16px; }
+.mobile-action-sheet .account-menu button { min-height: 48px; font-size: 16px; }
+.exam-setup { border: 0; }
+.exam-setup > summary { display: none; }
+@media (max-width: 700px) {
+  .main-content { padding-top: 0; }
+  .topbar { position: sticky; top: 0; z-index: 20; min-height: calc(64px + env(safe-area-inset-top)); margin: 0 -16px 8px; padding: env(safe-area-inset-top) 16px 0; background: var(--bg); flex-wrap: nowrap; }
+  .topbar h1 { font-size: 24px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar .global-search-trigger { display: none; }
+  .topbar .avatar { width: 44px; height: 44px; min-width: 44px; }
+  .context-strip { display: none; }
+  .mobile-context-back { margin: 0 0 8px; }
+  .mobile-context-back button { padding: 0; text-align: left; white-space: normal; }
+  .mobile-sidebar-open .sidebar-top .brand-wordmark-image { width: 160px; }
+  .sidebar-mobile-tools .drawer-user { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 16px; color: var(--text); }
+  .hero-card { padding: 24px 16px; min-height: 0; }
+  .hero-card h2 { font-size: 28px; }
+  .hero-card .hero-study-art { display: none; }
+  .hero-caption { margin-top: 16px; }
+  .adaptive-home-heading h2, .course-page-hero h2, .section-head h2, .material-workspace-head h2 { font-size: 24px; }
+  .adaptive-home-heading, .adaptive-today-grid { gap: 12px; }
+  .adaptive-today-grid article { padding: 16px; min-height: 0; }
+  .course-page-hero { gap: 12px; padding: 16px; }
+  .course-page-hero p { font-size: 13px; }
+  .course-context-nav { gap: 4px; scroll-padding-inline: 8px; }
+  .course-context-nav button { min-height: 44px; padding: 8px 12px; font-size: 13px; }
+  .course-study-context > div, .course-study-page .material-nav { display: none; }
+  .course-study-context { margin-bottom: 8px; }
+  .course-study-context button { width: auto; }
+  .study-layout { display: block; }
+  .study-stage { padding: 16px; }
+  .study-heading { gap: 16px; }
+  .study-heading h2 { font-size: 24px; overflow-wrap: anywhere; }
+  .mode-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; gap: 4px; }
+  .mode-tabs button { min-width: 0; min-height: 44px; padding: 8px 4px; font-size: 13px; }
+  .study-focus-content .study-heading, .study-focus-content .study-method-page > header { display: none; }
+  .study-focus-content .study-method-page { max-width: none; margin: 0; }
+  .study-focus-content .page-artifact-view { padding: 0; border: 0; margin: 0; background: transparent; }
+  .study-focus-content > .page-artifact-view { display: flex; flex-direction: column; flex: 1; }
+  .study-focus-content .page-artifact-view .section-head { font-size: 13px; margin-bottom: 16px; }
+  .study-focus-content .page-artifact-view .section-head button { display: none; }
+  .study-focus-content:has(.flash-wrap) { display: flex; flex-direction: column; }
+  .study-focus-content .flash-wrap { display: flex; flex-direction: column; flex: 1; min-height: 0; width: 100%; max-width: none; }
+  .study-focus-content .flash-wrap .counter { margin: 0 0 12px; font-size: 13px; text-align: center; }
+  .study-focus-content .flashcard { flex: 1; min-height: 260px; width: 100%; padding: 24px 16px; margin: 0; }
+  .study-focus-content .flashcard strong { font-size: 24px; line-height: 1.5; overflow-wrap: anywhere; }
+  .study-focus-content .flashcard small, .study-focus-content .flashcard > span { font-size: 13px; }
+  .flash-rating { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+  .flash-rating button { min-height: 52px; font-size: 16px; }
+  .flash-controls { display: flex; justify-content: space-between; gap: 12px; margin-top: 16px; }
+  .study-focus-content .flash-controls button { background: transparent; border: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+  .study-focus-content .quiz-toolbar h3, .study-focus-content .quiz-toolbar .eyebrow { display: none; }
+  .study-focus-content .quiz-toolbar { justify-content: flex-end; margin-bottom: 16px; }
+  .study-focus-content .quiz-card { border: 0; background: transparent; padding: 0; }
+  .study-focus-content .quiz-card h3, .guided-lesson h3 { font-size: 24px; line-height: 1.5; }
+  .options button, .exam-options button { min-height: 52px; font-size: 16px; padding: 12px; }
+  .quiz-continue { width: 100%; margin-top: 16px; min-height: 48px; }
+  .feedback { font-size: 15px; line-height: 1.6; }
+  .guided-lesson { border: 0; background: transparent; padding: 0; width: 100%; }
+  .guided-lesson textarea, .guided-lesson input, .review-text { font-size: 16px; }
+  .guided-lesson textarea { min-height: 144px; max-height: 280px; resize: none; }
+  .guided-lesson > .primary { position: sticky; bottom: 0; min-height: 48px; z-index: 2; }
+  .guided-feedback { margin-top: 16px; font-size: 15px; }
+  .exam-setup > summary { display: flex; align-items: center; min-height: 44px; font-size: 13px; color: var(--muted); cursor: pointer; }
+  .study-session-plan { padding: 16px; }
+  .material-workspace-head { padding: 8px 0 16px; gap: 12px; }
+  .material-workspace-head > div > .text-button { display: none; }
+  .material-workspace-head p { font-size: 13px; }
+  .material-workspace-head-actions { gap: 8px; }
+  .material-workspace-head-actions .secondary { min-height: 44px; min-width: 44px; }
+  .material-mobile-tabs { position: sticky; top: calc(64px + env(safe-area-inset-top)); z-index: 15; margin: 0 -8px 8px; padding: 8px; background: var(--bg); }
+  .material-mobile-tabs button { min-height: 44px; font-size: 16px; }
+  .material-split { min-height: 0; }
+  .material-document, .material-document iframe { min-height: calc(100dvh - 200px); }
+  .material-nexo-panel { max-height: none; min-height: 0; }
+  .material-nexo-content { overflow-y: visible; padding: 16px; }
+  .material-nexo-chat { min-height: calc(var(--nexo-viewport-height, 100dvh) - 192px); }
+  .material-content-section > summary { min-height: 48px; font-size: 16px; }
+  .material-nexo-head button, .material-methods button { min-height: 48px; }
+  .solver-chat { min-height: 0; }
+  .solver-empty { min-height: 0; padding: 16px 0; }
+  .solver-empty > span { width: 44px; height: 44px; }
+  .solver-empty h3 { font-size: 24px; margin: 12px 0 8px; }
+  .solver-empty p { font-size: 15px; }
+  .solver-prompts { display: grid; width: 100%; gap: 8px; margin-top: 16px; }
+  .solver-prompts button { min-height: 44px; text-align: left; font-size: 13px; }
+  .solver-messages { padding: 0 0 16px; }
+  .solver-composer, .material-chat-composer, .course-ai-compose { position: sticky; bottom: max(var(--nexo-keyboard-inset, 0px), env(safe-area-inset-bottom)); z-index: 4; padding: 12px; }
+  .solver-composer textarea { min-height: 48px; }
+  .solver-attach, .solver-send { min-width: 44px; min-height: 44px; }
+  .deep-toggle { min-height: 44px; }
+  .home-today .section-head { flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+  .home-today .section-head h2 { font-size: 24px; }
+  .home-continue, .home-today-plan { padding: 16px; }
+  .home-continue h3 { font-size: 20px; }
+  .home-continue p { font-size: 13px; }
+  .solver-attachments > div { width: 64px; height: 64px; flex-basis: 64px; }
+  .solver-attachments button { width: 44px; height: 44px; }
+  .corrector-intro { margin-bottom: 16px; }
+  .corrector-intro p { font-size: 15px; }
+  .corrector-workspace { padding: 16px; }
+  .corrector-label select { font-size: 16px; min-height: 44px; }
+  .review-text { min-height: 144px; max-height: 280px; padding: 12px; }
+  .review-actions { position: sticky; bottom: max(var(--nexo-keyboard-inset, 0px), env(safe-area-inset-bottom)); background: var(--panel); padding: 8px 0; z-index: 4; gap: 8px; }
+  .review-actions span { font-size: 13px; }
+  .review-actions button { min-height: 48px; }
+  .progress-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .progress-overall { flex-wrap: wrap; gap: 12px; }
+  input:not([type="checkbox"]):not([type="radio"]), textarea, select { font-size: 16px; }
+  .text-button, .context-menu-trigger, .secondary, .primary, .material-nexo-head button { min-height: 44px; }
+  button:active:not(:disabled) { filter: brightness(1.18); }
+  html[data-keyboard-open="true"] .solver-empty > p, html[data-keyboard-open="true"] .solver-empty > span, html[data-keyboard-open="true"] .solver-prompts { display: none; }
+  html[data-keyboard-open="true"] .solver-empty { padding: 8px 0; }
+}

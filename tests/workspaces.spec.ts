@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { selectStudyMode, openWorkspaceNavigation } from './helpers/navigation'
 
 const user = { id: '12345678-1234-4234-8234-123456789012', aud: 'authenticated', role: 'authenticated', email: 'estudiante@example.com', user_metadata: { full_name: 'Estudiante Nexo' }, app_metadata: {}, created_at: '2026-01-01T00:00:00Z' }
 const session = { access_token: 'test-access-token', refresh_token: 'test-refresh-token', token_type: 'bearer', expires_in: 3600, user }
@@ -57,8 +58,7 @@ async function login(page: Page) {
 }
 
 async function openWorkspace(page: Page) {
-  const trigger = page.viewportSize()!.width > 700 ? page.getByRole('button', { name: /Cambiar espacio de estudio/ }) : page.getByRole('button', { name: /Cambiar espacio desde el contexto/ })
-  if (!await page.getByRole('dialog', { name: 'Explorador de espacios' }).isVisible()) await trigger.click()
+  if (!await page.getByRole('dialog', { name: 'Explorador de espacios' }).isVisible()) await openWorkspaceNavigation(page)
 }
 
 async function switchTo(page: Page, name: string) {
@@ -115,7 +115,7 @@ test('moving a course transfers its real progress and deleting the workspace ret
   await expect(page.getByRole('heading', { name: 'Introducción a la célula' }).first()).toBeVisible()
   await page.getByRole('button', { name: 'Flashcards', exact: true }).click()
   await page.locator('.flashcard').click()
-  await page.getByRole('button', { name: 'Quiz', exact: true }).click()
+  await selectStudyMode(page, 'Quiz')
   await page.locator('.quiz-card .options button').first().click()
   await page.goto('/progress')
   const originalProgress = Number((await page.locator('.progress-overall strong').textContent())?.replace('%', ''))

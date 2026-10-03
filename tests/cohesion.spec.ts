@@ -127,6 +127,7 @@ test('page chat and cached artifacts use only the chosen page; errors update the
   for (const action of ['Resumir página', 'Crear tarjetas', 'Crear preguntas']) {
     await page.locator('.page-context-tools').getByRole('button', { name: action }).click()
     await expect(page.locator('.page-artifact-view')).toContainText('Página 2')
+    if (page.viewportSize()!.width <= 700 && action !== 'Resumir página') await page.getByRole('button', { name: 'Volver al material o curso' }).click()
     await expect(page.locator('.page-context-tools').getByRole('button', { name: action })).toBeEnabled()
   }
   for (const payload of payloads.filter(item => item.task === 'artifact')) {
@@ -136,8 +137,9 @@ test('page chat and cached artifacts use only the chosen page; errors update the
   }
   await page.locator('.page-context-tools').getByRole('button', { name: 'Crear preguntas' }).click()
   expect(payloads.filter(item => item.task === 'artifact')).toHaveLength(3)
-  await expect(page.locator('.page-artifact-view .quiz-card')).toHaveCount(5)
+  await expect(page.locator('.page-artifact-view .quiz-card')).toHaveCount(page.viewportSize()!.width <= 700 ? 1 : 5)
   await page.locator('.page-artifact-view .quiz-card').first().getByRole('button', { name: /Solo volumen/ }).click()
+  if (page.viewportSize()!.width <= 700) await page.getByRole('button', { name: 'Volver al material o curso' }).click()
   await page.getByRole('button', { name: /← Física de prueba/ }).click()
   await expect(page.locator('.course-recommendations')).toContainText('repaso')
   await navigateSection(page, 'Inicio')
@@ -153,6 +155,7 @@ test('page chat and cached artifacts use only the chosen page; errors update the
   await expect(page.locator('.page-artifact-view')).toContainText('Página 2 · Flashcards')
   await page.locator('.page-artifact-view .flashcard').click()
   await page.getByRole('button', { name: 'Difícil', exact: true }).click()
+  if (page.viewportSize()!.width <= 700) await page.getByRole('button', { name: 'Volver al material o curso' }).click()
   await page.getByRole('button', { name: /← Física de prueba/ }).click()
   await navigateSection(page, 'Progreso')
   await expect(page.locator('.stat-card').filter({ hasText: 'Tarjetas repasadas' })).toContainText('1')
@@ -252,10 +255,11 @@ test('mobile header, drawer, suggestions, accordions and search fit all target w
   test.setTimeout(90000)
   const mock = await academicMock(page)
   mock.seedCourse(course)
+  const visit = (path: string) => page.evaluate(target => { history.pushState({}, '', target); dispatchEvent(new PopStateEvent('popstate')) }, path)
   await login(page)
   for (const [width, height] of [[393, 852], [430, 932], [768, 1024], [1440, 900], [1920, 1080]]) {
     await page.setViewportSize({ width, height })
-    await page.goto('/resolver')
+    await visit('/resolver')
     await expect(page.locator('.solver-composer')).toBeVisible()
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
     if (width >= 1101) {
@@ -284,7 +288,7 @@ test('mobile header, drawer, suggestions, accordions and search fit all target w
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
     await page.keyboard.press('Escape')
     await page.screenshot({ path: info.outputPath(`resolver-${width}.png`) })
-    await page.goto(`/courses/${course.id}/materials/material-pages/workspace`)
+    await visit(`/courses/${course.id}/materials/material-pages/workspace`)
     if (width < 700) {
       await expect(page.locator('.workspace-edge-trigger')).toBeHidden()
       await page.getByRole('tab', { name: 'Nexo IA' }).click()
@@ -297,7 +301,7 @@ test('mobile header, drawer, suggestions, accordions and search fit all target w
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
     await page.screenshot({ path: info.outputPath(`workspace-${width}.png`) })
-    await page.goto(`/courses/${course.id}/library`)
+    await visit(`/courses/${course.id}/library`)
     await expect(page.locator('.course-artifact-library')).toBeVisible()
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
   }

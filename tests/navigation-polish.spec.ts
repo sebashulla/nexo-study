@@ -86,7 +86,7 @@ test('palette supports keyboard, recent destinations, scoped resources and persi
   await input.press('Enter')
   await expect(page).toHaveURL(/\/materials\/navigation-material\/workspace$/)
   await expect(page.locator('.material-workspace-head')).toContainText('Página 2')
-  if (page.viewportSize()!.width <= 700) await page.getByRole('tab', { name: 'Nexo IA' }).click()
+  if (page.viewportSize()!.width <= 700) await expect(page.locator('.study-focus-shell')).toBeVisible()
   await expect(page.locator('.page-artifact-view')).toBeVisible()
   await page.goto('/resolver')
   await page.route('**/api/ai/solve', route => route.fulfill({ json: { text: 'La energía cinética es la energía del movimiento.' } }))
@@ -136,6 +136,7 @@ test('visual QA covers all eight viewports with one navigation, accessible menus
   const mock = await academicMock(page)
   mock.seedCourse(course)
   for (const [index, name] of ['Química', 'Anatomía', 'Matemáticas', 'Biología'].entries()) mock.seedCourse({ id: `course-grid-${index}`, name, emoji: '📚', materials: [] })
+  const visit = (path: string) => page.evaluate(target => { history.pushState({}, '', target); dispatchEvent(new PopStateEvent('popstate')) }, path)
   await login(page)
   for (const [width, height] of [[320, 640], [375, 667], [393, 852], [430, 932], [768, 1024], [1366, 768], [1440, 900], [1920, 1080]]) {
     await page.setViewportSize({ width, height })
@@ -143,7 +144,7 @@ test('visual QA covers all eight viewports with one navigation, accessible menus
       await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
       await page.screenshot({ path: info.outputPath(`${name}-${width}.png`), fullPage: true, animations: 'disabled' })
     }
-    await page.goto('/')
+    await visit('/')
     await expect(page.locator('.home-page')).toBeVisible()
     await expect(page.locator('.mobile-nav, .workspace-edge-trigger, .feedback-fab')).toHaveCount(0)
     await screenshot('home')
@@ -181,21 +182,21 @@ test('visual QA covers all eight viewports with one navigation, accessible menus
         await expect(page.locator('body')).not.toHaveCSS('overflow', 'hidden')
       }
     }
-    await page.goto('/courses')
+    await visit('/courses')
     await expect(page.locator('.course-library-grid')).toBeVisible()
     const columns = await page.locator('.course-library-grid').evaluate(node => getComputedStyle(node).gridTemplateColumns.split(' ').length)
     expect(columns).toBe(width <= 700 ? 1 : width >= 1500 ? 3 : 2)
     await screenshot('courses')
-    await page.goto('/resolver')
+    await visit('/resolver')
     await expect(page.locator('.nexo-composer')).toBeVisible()
     await page.getByRole('textbox', { name: 'Escribe tu pregunta' }).fill('Explícame un ejercicio paso a paso')
     await page.getByRole('textbox', { name: 'Escribe tu pregunta' }).focus()
     await screenshot('resolver')
-    await page.goto(`/courses/${course.id}/materials/${materialId}/workspace`)
+    await visit(`/courses/${course.id}/materials/${materialId}/workspace`)
     await expect(page.locator('.material-workspace')).toBeVisible()
     await screenshot('material')
     if (width <= 700) { await expect(page.locator('.material-nexo-panel')).toBeHidden(); await page.getByRole('tab', { name: 'Nexo IA' }).click(); await expect(page.locator('.material-document')).toBeHidden() }
-    await page.getByRole('button', { name: 'Chat', exact: true }).click()
+    await page.getByRole('tab', { name: 'Chat', exact: true }).click()
     await expect(page.locator('.material-chat-composer.nexo-composer')).toBeVisible()
     await screenshot('material-chat')
   }

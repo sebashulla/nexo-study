@@ -67,7 +67,7 @@ test('Quiz offers one practice mode with all questions and a restart action', as
   await page.goto('/courses/course-bio/materials/mat-cell')
   await expect(page.getByRole('button', { name: 'Simulacro' })).toHaveCount(0)
   await page.getByRole('button', { name: 'Quiz', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Quiz del material' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: page.viewportSize()!.width <= 700 ? 'Quiz' : 'Quiz del material', exact: true })).toBeVisible()
   const count = await page.locator('.quiz-card').count()
   expect(count).toBeGreaterThan(0)
   await page.locator('.quiz-card .options button').first().click()

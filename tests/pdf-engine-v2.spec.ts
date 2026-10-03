@@ -1,3 +1,4 @@
+import { openWorkspaceNavigation } from './helpers/navigation'
 import { expect, test, type Page } from '@playwright/test'
 
 const user = { id: '12345678-1234-4234-8234-123456789012', aud: 'authenticated', role: 'authenticated', email: 'pdf@example.com', user_metadata: { full_name: 'Estudiante PDF' }, app_metadata: {}, created_at: '2026-01-01T00:00:00Z' }
@@ -78,7 +79,7 @@ test('a scanned PDF remains viewable and permits a selected visual page', async 
   await page.locator('.material-visual-analysis').getByRole('button', { name: 'Analizar visualmente' }).click()
   await expect(page.locator('.material-chat-answer')).toContainText('introducción a la célula')
   expect(images).toBe(1)
-  await page.locator('.material-nexo-head').getByRole('button', { name: 'Contenido' }).click()
+  await page.locator('.material-nexo-head').getByRole('tab', { name: 'Contenido' }).click()
   const practice = page.locator('.material-method-group').filter({ has: page.locator('summary', { hasText: 'Practicar' }) })
   if (!(await practice.getAttribute('open') === '')) await practice.locator('summary').click()
   await expect(page.getByRole('button', { name: /Flashcards/ }).last()).toBeEnabled()
@@ -140,7 +141,7 @@ test('workspace, mobile tabs and navigation fit target viewport sizes', async ({
   await page.keyboard.press('Escape')
   await expect(page.getByRole('navigation', { name: 'Navegación móvil' })).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => document.body.style.overflow)).not.toBe('hidden')
-  await page.getByRole('button', { name: /Cambiar espacio desde el contexto/ }).click()
+  await openWorkspaceNavigation(page)
   await expect(page.getByRole('navigation', { name: 'Navegación móvil' })).toBeHidden()
   await page.getByRole('button', { name: 'Cerrar explorador de espacios' }).last().click()
   await expect(page.getByRole('navigation', { name: 'Navegación móvil' })).toHaveCount(0)

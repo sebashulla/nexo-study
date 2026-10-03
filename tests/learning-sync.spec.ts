@@ -61,7 +61,7 @@ test('courses and material text restore from the academic repository after local
   await page.locator('.course-library-card').filter({ hasText: 'Física remota' }).click()
   await page.locator('.material-card').filter({ hasText: 'Energía cinética' }).click()
   await expect(page.locator('.material-text-preview')).toContainText('cuadrado de la velocidad')
-  await page.locator('.route-breadcrumbs').getByRole('button', { name: /Física remota/ }).click()
+  await page.locator(page.viewportSize()!.width <= 700 ? '.mobile-context-back' : '.route-breadcrumbs').getByRole('button', { name: /Física remota/ }).click()
   await page.getByRole('navigation', { name: 'Secciones de Física remota' }).getByRole('button', { name: 'Biblioteca' }).click()
   await expect(page.locator('.library-entry').filter({ hasText: 'Resumen' })).toBeVisible()
   expect([...(academic.get('courses')?.values() ?? [])].filter(row => row.name === 'Física remota')).toHaveLength(1)

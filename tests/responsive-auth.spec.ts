@@ -1,3 +1,4 @@
+import { openWorkspaceNavigation } from './helpers/navigation'
 import { test, expect, type Page } from '@playwright/test'
 
 // Only simulated auth responses: never create accounts or send real emails.
@@ -159,7 +160,7 @@ test('course study and main routes fit the viewport with one workspace explorer'
   }
   await expect(page.locator('.sidebar nav').getByRole('button', { name: 'Espacios', includeHidden: true })).toHaveCount(0)
   await expect(page.locator('.sidebar nav').getByRole('button', { name: 'Estudiar', includeHidden: true })).toHaveCount(0)
-  await page.getByRole('button', { name: page.viewportSize()!.width <= 700 ? /Cambiar espacio desde el contexto/ : /Cambiar espacio de estudio/ }).click()
+  await openWorkspaceNavigation(page)
   await expect(page.getByRole('dialog', { name: 'Explorador de espacios' })).toBeVisible()
   await noOverflow(page)
   await page.screenshot({ path: info.outputPath('explorer.png'), fullPage: true })
@@ -222,6 +223,7 @@ test('create a course and material, study it, and use accessible scrollable dial
   await page.locator('.flashcard').click()
   await expect(page.locator('.flashcard')).toContainText('RESPUESTA')
   await page.screenshot({ path: info.outputPath('flashcard.png'), fullPage: true })
+  if (page.viewportSize()!.width <= 700) await page.getByRole('button', { name: 'Volver al material o curso' }).click()
   await page.getByRole('button', { name: 'Mi cuenta' }).click()
   await page.getByRole('menuitem', { name: 'Enviar comentarios' }).click()
   dialog = page.getByRole('dialog')
