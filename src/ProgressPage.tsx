@@ -1,17 +1,25 @@
+import { lazy, Suspense, useState } from 'react'
+import { useAuth } from './auth/AuthContext'
+import { conceptStatusLabel, courseConcepts } from './lib/learningGraphRepository'
+import type { LearningConcept } from './types'
+const ConceptDetail = lazy(() => import('./ConceptDetail').then(module => ({ default: module.ConceptDetail })))
 import type { Course, StudySession } from './types'
 import { materialProgress, studyPackFor, workspaceProgress, type StudyActivity } from './lib/studyProgress'
 import { masterySummary, type LearningMemory } from './lib/learningState'
 import type { StudyWorkspace } from './lib/workspaces'
 
-export function ProgressPage({ workspace, courses, activity, memory, sessions = [], onOpenMaterial, onPractice }: {
+export function ProgressPage({ workspace, courses, activity, memory, sessions = [], onOpenMaterial, onPractice, onAsk }: {
   workspace: StudyWorkspace
   courses: Course[]
   activity: StudyActivity
   memory: LearningMemory
   sessions?: StudySession[]
   onOpenMaterial: (courseId: string, materialId: string) => void
-  onPractice?: (courseId: string, materialId: string) => void
+  onPractice?: (courseId: string, materialId: string, concept?: LearningConcept) => void
+  onAsk?: (course: Course, concept: LearningConcept) => void
 }) {
+  const { user } = useAuth()
+  const [selected, setSelected] = useState<{ course: Course; concept: LearningConcept }>()
   const progress = workspaceProgress(courses, activity)
   const mastery = masterySummary(memory, courses.flatMap(course => course.materials.map(material => material.id)))
   const weak = mastery.weak.filter(concept => concept.confidence < .53).slice(0, 5)
@@ -42,6 +50,13 @@ export function ProgressPage({ workspace, courses, activity, memory, sessions = 
         })}</div>}
       </article>
     })}</div> : <div className="panel progress-empty"><span>✦</span><h3>Este espacio comienza contigo</h3><p>Agrega un curso y sus materiales. Aquí verás su progreso sin mezclarlo con los demás espacios.</p></div>}
+    <section className="panel progress-concepts"><p className="eyebrow">Conceptos del curso</p>{courses.map(course => {
+      const concepts = courseConcepts(course, memory)
+      return <div key={course.id}><h3>{course.name}</h3>{concepts.length ? <div className="concept-state-list">{concepts.slice(0, 30).map(concept => <button className="secondary" key={concept.key} onClick={() => setSelected({ course, concept })}><strong>{concept.label}</strong><small>{conceptStatusLabel(concept)}</small></button>)}</div> : <p>No hay suficiente evidencia todavía. Prepara un material o practica en este curso.</p>}{concepts.length > 30 && <details><summary>{concepts.length - 30} conceptos más</summary><div className="concept-state-list">{concepts.slice(30).map(concept => <button className="secondary" key={concept.key} onClick={() => setSelected({ course, concept })}><strong>{concept.label}</strong><small>{conceptStatusLabel(concept)}</small></button>)}</div></details>}</div>
+    })}</section>
+    {selected && user && <Suspense fallback={<p>Cargando concepto…</p>}><ConceptDetail userId={user.id} course={selected.course} concept={memory[selected.concept.key] ?? selected.concept} onClose={() => setSelected(undefined)}
+      onPractice={() => { setSelected(undefined); (onPractice ?? onOpenMaterial)(selected.course.id, selected.concept.materialId, selected.concept) }}
+      onAsk={() => { setSelected(undefined); onAsk?.(selected.course, selected.concept) }}/></Suspense>}
     <p className="progress-explainer">Actividad: resumen abierto, tarjetas vistas, preguntas respondidas y ejercicios completados. Dominio estimado: calidad y repetición de las respuestas por concepto. Las sesiones se muestran por separado. Si mueves un curso a otro espacio, estos indicadores lo acompañan.</p>
   </section>
 }

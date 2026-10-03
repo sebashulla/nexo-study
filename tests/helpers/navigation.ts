@@ -17,3 +17,10 @@ export async function openWorkspaceNavigation(page: Page) {
   if (page.viewportSize()!.width <= 700 && !await page.locator('.app-shell').evaluate(node => node.classList.contains('mobile-sidebar-open'))) await page.getByRole('button', { name: 'Abrir navegación' }).click()
   await page.getByRole('button', { name: /Cambiar espacio de estudio/ }).click()
 }
+
+export async function openGlobalSearch(page: Page) {
+  if (page.viewportSize()!.width <= 700) {
+    await page.getByRole('button', { name: 'Abrir navegación' }).click()
+    await page.getByRole('button', { name: '⌕ Buscar en Nexo', exact: true }).click()
+  } else await page.getByRole('button', { name: 'Buscar en Nexo Study', exact: true }).click()
+}

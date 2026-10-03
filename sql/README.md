@@ -11,9 +11,12 @@ Ejecuta los archivos **en orden** desde Supabase → SQL Editor. Una migración 
 7. `007_learning_workspace.sql` — cursos, materiales, fragmentos y temas por página, recursos de estudio, progreso, memoria de aprendizaje, sesiones y bucket privado para PDF.
 8. `008_pdf_engine_v2.sql` — elimina el límite de 250 páginas, separa el estado de análisis del visor y añade búsqueda acotada de fragmentos.
 
+9. `009_saved_solutions.sql` — soluciones de Resolver guardadas en curso e imágenes privadas.
+10. `010_conversations_learning_evidence.sql` — conversaciones, adjuntos privados, evidencia y cálculo sobre learning_state.
+
 ## Regla de migraciones
 
-No edites una migración que ya ejecutaste en producción. El siguiente cambio de base de datos debe crearse como `009_...sql`, después `010_...sql`, etc.
+No edites una migración que ya ejecutaste en producción. El siguiente cambio de base de datos debe crearse como `011_...sql`.
 
 ## Datos académicos de V0.9
 
@@ -28,3 +31,11 @@ Antes de producción, aplica 007 y después 008 en un proyecto de prueba. Verifi
 ## Administrador
 
 `006_owner_admin.sql` espera que ya exista exactamente una cuenta con username `sebasshulla` (sin `@` en la base de datos). Si no la encuentra, la migración falla intencionalmente para no promover una cuenta equivocada.
+
+## Verificación V0.9.6
+
+Aplicar 010 después de 009. La migración es aditiva y repetible; preserva intentos anteriores en `legacy_baseline`. No cambia contratos PDF ni las políticas de administración. Threads/messages/evidence tienen RLS exclusivo del dueño; un admin no dispone de excepción académica. General usa workspace NULL para el espacio General; curso/material usan FKs compuestas de propiedad. Su ubicación sigue la pertenencia del curso. Eliminar un espacio limpia únicamente workspace_id en los threads; conserva mensajes, evidencia y adjuntos.
+
+Validación local: `npm run test:schema` ejecuta las diez migraciones en PostgreSQL WASM con esquemas mínimos Auth/Storage. Instalar primero el runtime aislado indicado en `scripts/test-learning-schema.mjs`. Ese test no prueba Supabase real. La comprobación pendiente con sesiones A/B, incluyendo RPCs y Storage HTTP, está en [SECURITY_VALIDATION.md](SECURITY_VALIDATION.md).
+
+El frontend puede conservar pendientes y avisar si 010 no está aplicada. Eso no convierte conversaciones locales en persistencia entre dispositivos. No habilitar la versión en producción como plenamente sincronizada hasta aplicar 010 y ejecutar la validación A/B.

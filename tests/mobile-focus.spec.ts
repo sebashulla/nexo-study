@@ -120,7 +120,8 @@ test('phone quiz reaches every question, updates learning and returns focus to m
     await page.getByRole('button', { name: index === 2 ? 'Ver resultado' : 'Continuar →' }).click()
   }
   await expect(page.getByRole('heading', { name: 'Práctica terminada' })).toBeVisible()
-  await expect.poll(() => mock.requests.filter(request => request.table === 'learning_state' && request.method === 'POST').length).toBeGreaterThan(0)
+  await expect.poll(() => mock.rows.get('concept_evidence')?.size).toBe(3)
+  await expect.poll(() => [...(mock.rows.get('learning_state')?.values() ?? [])].reduce((total, state) => total + Number(state.attempts), 0)).toBe(3)
   await page.getByRole('button', { name: 'Practicar de nuevo' }).click(); await expect(page.locator('.study-focus-counter')).toHaveText('1 / 3')
   await page.getByRole('button', { name: 'Volver al material o curso' }).click()
   await expect(page.locator('.study-focus-shell')).toHaveCount(0); await expect(page.locator('.topbar')).not.toHaveAttribute('inert', '')

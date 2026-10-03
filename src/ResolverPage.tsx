@@ -2,52 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import { useAuth } from './auth/AuthContext'
 import { callAI } from './lib/aiClient'
 import { prepareImages, type ImageAttachment } from './lib/imageUtils'
-import { supabase } from './lib/supabase'
 import { ResponseRenderer } from './ResponseRenderer'
-import { Icon } from './Icon'
 import { ChatComposer } from './ChatComposer'
 import type { SolutionDraft } from './types'
-import { clearResolverImages, loadResolverImages, pruneResolverImages, storeResolverImages } from './lib/resolverAttachments'
-
-type ChatMessage = { id: string; role: 'user' | 'assistant'; text: string; createdAt: string; imageCount?: number; remoteId?: string }
-type ChatThread = { id: string; title: string; category: string; deep: boolean; createdAt: string; updatedAt: string; messages: ChatMessage[] }
-type PendingRequest = { threadId: string; question: string; category: string; deep: boolean; images: ImageAttachment[]; context?: string }
-type LegacyItem = { id?: string; question: string; category: string; answer: string; createdAt: string; deep: boolean; imageCount: number }
-
-const CHAT_PREFIX = 'nexo-study-resolver-chats-v1:'
-const HISTORY_PREFIX = 'nexo-study-resolver-history-v4:'
-const LEGACY_HISTORY_PREFIX = 'nexo-study-resolver-history-v3:'
-const HISTORY_PANEL_PREFIX = 'nexo-study-resolver-panel:'
-const chatKey = (userId: string, workspaceId: string) => `${CHAT_PREFIX}${userId}:${workspaceId}`
-const newId = () => crypto.randomUUID()
-
-function loadThreads(userId: string, workspaceId: string): ChatThread[] {
-  try {
-    const saved = localStorage.getItem(chatKey(userId, workspaceId))
-    if (saved) {
-      const parsed: unknown = JSON.parse(saved)
-      if (Array.isArray(parsed)) return parsed.filter((thread): thread is ChatThread =>
-        thread && typeof thread.id === 'string' && typeof thread.title === 'string' && Array.isArray(thread.messages) &&
-        thread.messages.every((message: ChatMessage) => message && typeof message.text === 'string' && (message.role === 'user' || message.role === 'assistant')))
-    }
-    const old = localStorage.getItem(`${HISTORY_PREFIX}${userId}:${workspaceId}`)
-      ?? (workspaceId === 'general' ? localStorage.getItem(`${LEGACY_HISTORY_PREFIX}${userId}`) : null)
-    const legacy: unknown = JSON.parse(old || '[]')
-    if (!Array.isArray(legacy)) return []
-    return legacy.filter((item): item is LegacyItem => item && typeof item.question === 'string' && typeof item.answer === 'string').map((item, index) => ({
-      id: `legacy-${index}-${item.createdAt || index}`,
-      title: item.question,
-      category: item.category || 'General',
-      deep: Boolean(item.deep),
-      createdAt: item.createdAt || new Date().toISOString(),
-      updatedAt: item.createdAt || new Date().toISOString(),
-      messages: [
-        { id: `legacy-user-${index}`, role: 'user' as const, text: item.question, createdAt: item.createdAt || '', imageCount: item.imageCount || 0 },
-        { id: `legacy-answer-${index}`, role: 'assistant' as const, text: item.answer, createdAt: item.createdAt || '', remoteId: item.id },
-      ],
-    }))
-  } catch { return [] }
-}
+import { loadResolverImages } from './lib/resolverAttachments'
+import { useConversationDraft } from './hooks/useConversationDraft'
+import { useConversation } from './hooks/useConversation'
+import { ConversationTools, EarlierMessages } from './ConversationTools'
+import { loadMessageImages } from './lib/conversationRepository'
+import { conversationScopeKey, type ConversationMessage } from './lib/conversationTypes'
+import { buildMemoryContext } from './lib/learningMemory'
+import { aiErrorMessage } from './lib/aiClient'
 
 const suggestions: Record<string, string[]> = {
   General: ['Explícame esto paso a paso', 'Resume la idea central', '¿Cuál es la respuesta y por qué?'],
@@ -58,14 +23,16 @@ const suggestions: Record<string, string[]> = {
 }
 const categories = Object.keys(suggestions)
 
-export function ResolverPage({ workspaceId, initialThreadId, onSave }: { workspaceId: string; initialThreadId?: string; onSave: (draft: SolutionDraft) => void }) {
+type PendingRequest = { threadId: string; question: string; category: string; deep: boolean; images: ImageAttachment[]; context: string }
+export function ResolverPage({ workspaceId, initialThreadId, onSave, onPractice }: {
+  workspaceId: string; initialThreadId?: string; onSave: (draft: SolutionDraft) => void;
+  onPractice?: (question: string, answer: string) => void
+}) {
   const { user } = useAuth()
-  const [initialThreads] = useState<ChatThread[]>(() => user ? loadThreads(user.id, workspaceId) : [])
-  const [threads, setThreads] = useState(initialThreads)
-  const [activeId, setActiveId] = useState<string | null>(initialThreads[0]?.id ?? null)
-  const [category, setCategory] = useState(initialThreads[0]?.category ?? 'General')
-  const [deep, setDeep] = useState(initialThreads[0]?.deep ?? false)
-  const [question, setQuestion] = useState('')
+  const conversation = useConversation({ scope: 'general', workspaceId }, initialThreadId)
+  const [category, setCategory] = useState('General')
+  const [deep, setDeep] = useState(false)
+  const [question, setQuestion] = useConversationDraft(user!.id, conversationScopeKey(conversation.scope))
   const [images, setImages] = useState<ImageAttachment[]>([])
   const [imageBusy, setImageBusy] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -73,68 +40,28 @@ export function ResolverPage({ workspaceId, initialThreadId, onSave }: { workspa
   const [error, setError] = useState('')
   const [failedRequest, setFailedRequest] = useState<PendingRequest | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
-  const [historyOpen, setHistoryOpen] = useState(() => {
-    if (window.matchMedia('(max-width: 700px)').matches) return false
-    try {
-      const saved = user && localStorage.getItem(`${HISTORY_PANEL_PREFIX}${user.id}:${workspaceId}`)
-      return saved === null || saved === undefined ? true : saved === 'true'
-    } catch { return true }
-  })
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const messageListRef = useRef<HTMLDivElement>(null)
-  const historyRef = useRef<HTMLElement>(null)
-  const historyToggleRef = useRef<HTMLButtonElement>(null)
-  const turnImages = useRef(new Map<string, ImageAttachment[]>())
-  const activeThread = threads.find(thread => thread.id === activeId)
-
+  const previousSelection = useRef(conversation.activeId)
+  const { messages, activeThread } = conversation
   useEffect(() => {
-    if (!user) return
-    try { localStorage.setItem(chatKey(user.id, workspaceId), JSON.stringify(threads.slice(0, 25))); void pruneResolverImages(user.id, workspaceId, threads.slice(0, 25).flatMap(thread => thread.messages.map(message => message.id))).catch(() => {}) }
-    catch { setError('No pudimos guardar esta conversación en el navegador. Libera espacio de almacenamiento.') }
-  }, [threads, user, workspaceId])
-
+    if (previousSelection.current === conversation.activeId) return
+    previousSelection.current = conversation.activeId
+    setQuestion(''); setImages([]); setError(''); setFailedRequest(null)
+  }, [conversation.activeId])
+  const first = messages.find(item => item.role === 'user')
   useEffect(() => {
-    if (!user || window.matchMedia('(max-width: 700px)').matches) return
-    try { localStorage.setItem(`${HISTORY_PANEL_PREFIX}${user.id}:${workspaceId}`, String(historyOpen)) }
-    catch { /* History stays usable for this session. */ }
-  }, [historyOpen, user, workspaceId])
-
-  useEffect(() => {
-    const mobile = window.matchMedia('(max-width: 700px)')
-    const closeOnMobile = (event: MediaQueryListEvent) => { if (event.matches) setHistoryOpen(false) }
-    mobile.addEventListener('change', closeOnMobile)
-    return () => mobile.removeEventListener('change', closeOnMobile)
-  }, [])
-
-  useEffect(() => {
-    if (!historyOpen || !window.matchMedia('(max-width: 700px)').matches) return
-    historyRef.current?.focus()
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { setHistoryOpen(false); historyToggleRef.current?.focus() }
-      if (event.key === 'Tab' && historyRef.current) {
-        const focusable = Array.from(historyRef.current.querySelectorAll<HTMLButtonElement>('button:not([disabled])')).filter(button => button.offsetParent !== null)
-        const first = focusable[0]
-        const last = focusable[focusable.length - 1]
-        if (!first || !last) return
-        if (event.shiftKey && (document.activeElement === first || document.activeElement === historyRef.current)) { event.preventDefault(); last.focus() }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
-      }
-    }
-    document.addEventListener('keydown', escape)
-    return () => document.removeEventListener('keydown', escape)
-  }, [historyOpen])
-
+    if (first) { setCategory(first.metadata.category ?? 'General'); setDeep(first.metadata.deep ?? false) }
+  }, [first?.id, first?.metadata.category, first?.metadata.deep])
   useEffect(() => {
     if (!busy) return
     const timer = window.setInterval(() => setThinkingStage(stage => (stage + 1) % 3), 1400)
     return () => window.clearInterval(timer)
   }, [busy])
-
   useEffect(() => {
     const list = messageListRef.current
     if (list) list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
-  }, [activeId, activeThread?.messages.length, thinkingStage, error])
-
+  }, [conversation.activeId, messages.length, thinkingStage, error])
   const importImages = async (files: File[]) => {
     if (!files.length) return
     setImageBusy(true); setError('')
@@ -142,122 +69,63 @@ export function ResolverPage({ workspaceId, initialThreadId, onSave }: { workspa
     catch (cause) { setError(cause instanceof Error ? cause.message : 'No se pudieron preparar las imágenes.') }
     finally { setImageBusy(false) }
   }
-
-  useEffect(() => {
-    if (!initialThreadId) return
-    const thread = threads.find(item => item.id === initialThreadId)
-    if (thread) { setActiveId(thread.id); setCategory(thread.category); setDeep(thread.deep); setError(''); setFailedRequest(null) }
-  }, [initialThreadId])
-
   const requestAnswer = async (request: PendingRequest) => {
     setBusy(true); setThinkingStage(0); setError(''); setFailedRequest(null)
     try {
-      const answer = await callAI({
-        task: 'solve', question: request.question, category: request.category,
-        mode: request.deep ? 'deep' : 'standard', deep: request.deep,
-        context: request.context, images: request.images,
-      })
-      const answerId = newId()
-      const now = new Date().toISOString()
-      setThreads(current => current.map(thread => thread.id === request.threadId ? {
-        ...thread, updatedAt: now, messages: [...thread.messages, { id: answerId, role: 'assistant' as const, text: answer, createdAt: now }],
-      } : thread))
-      if (user && supabase) {
-        void (async () => {
-          const { data } = await supabase.from('ai_queries').insert({
-            user_id: user.id, task: 'solve', category: request.category, question: request.question,
-            answer, deep: request.deep, image_count: request.images.length,
-          }).select('id').single()
-          if (data?.id) setThreads(current => current.map(thread => thread.id === request.threadId ? {
-            ...thread, messages: thread.messages.map(message => message.id === answerId ? { ...message, remoteId: data.id } : message),
-          } : thread))
-        })()
-      }
+      const answer = await callAI({ task: 'solve', question: request.question, category: request.category,
+        mode: request.deep ? 'deep' : 'standard', deep: request.deep, context: request.context, images: request.images })
+      conversation.append('assistant', answer, {}, [], request.threadId)
+      setQuestion(''); setImages([])
+      textareaRef.current?.focus()
     } catch (cause) {
-      setFailedRequest(request)
-      setError(cause instanceof Error ? cause.message : 'Nexo IA no está disponible en este momento.')
+      setFailedRequest(request); setError(aiErrorMessage(cause))
+      setQuestion(request.question)
     } finally { setBusy(false) }
   }
-
   const send = () => {
-    if (busy || imageBusy) return
+    if (busy || imageBusy || conversation.loading) return
     const prompt = question.trim()
     if (!prompt && !images.length) { setError('Escribe una pregunta o adjunta al menos una imagen.'); return }
+    if (failedRequest && prompt === failedRequest.question) { void requestAnswer(failedRequest); return }
     const text = prompt || 'Analiza las imágenes adjuntas'
-    const threadId = activeId ?? newId()
-    const now = new Date().toISOString()
-    const previous = activeThread?.messages ?? []
-    const context = previous.slice(-12).map(message => `${message.role === 'user' ? 'Estudiante' : 'Nexo'}: ${message.text}`).join('\n\n').slice(-12000) || undefined
-    const activeImages = images
-    const turn: ChatMessage = { id: newId(), role: 'user', text, createdAt: now, imageCount: activeImages.length }
-    if (activeImages.length && user) {
-      turnImages.current.set(turn.id, activeImages)
-      void storeResolverImages(user.id, workspaceId, turn.id, activeImages).catch(() => { /* The current turn still has its images in memory. */ })
-    }
-    setThreads(current => {
-      const existing = current.find(thread => thread.id === threadId)
-      if (existing) return [{ ...existing, updatedAt: now, messages: [...existing.messages, turn] }, ...current.filter(thread => thread.id !== threadId)]
-      return [{ id: threadId, title: text, category, deep, createdAt: now, updatedAt: now, messages: [turn] }, ...current]
-    })
-    setActiveId(threadId); setQuestion(''); setImages([])
-    void requestAnswer({ threadId, question: prompt || 'Resuelve los ejercicios o analiza el caso mostrado en las imágenes.', category, deep, images: activeImages, context })
+    const context = buildMemoryContext({ messages })
+    const turn = conversation.append('user', text, { category, deep }, images)
+    const request = { threadId: turn.threadId, question: prompt || 'Resuelve los ejercicios o analiza el caso mostrado en las imágenes.', category, deep, images, context }
+    setQuestion(''); setImages([])
+    void requestAnswer(request)
   }
-
-  const startNew = () => {
-    if (busy) return
-    setActiveId(null); setQuestion(''); setImages([]); setCategory('General'); setDeep(false); setError(''); setFailedRequest(null)
+  const copyAnswer = async (message: ConversationMessage) => {
+    try { await navigator.clipboard.writeText(message.content); setCopiedId(message.id); window.setTimeout(() => setCopiedId(null), 1600) }
+    catch { setError('No pudimos copiar la respuesta. Puedes seleccionar el texto.') }
   }
-
-  const openThread = (thread: ChatThread) => {
-    if (busy) return
-    setActiveId(thread.id); setCategory(thread.category); setDeep(thread.deep); setQuestion(''); setImages([]); setError(''); setFailedRequest(null)
-    if (window.matchMedia('(max-width: 700px)').matches) setHistoryOpen(false)
-  }
-
-  const copyAnswer = async (message: ChatMessage) => {
-    try { await navigator.clipboard.writeText(message.text); setCopiedId(message.id); window.setTimeout(() => setCopiedId(null), 1600) }
-    catch { /* Clipboard access may be unavailable. */ }
-  }
-
-  const saveAnswer = async (message: ChatMessage) => {
+  const sourceFor = (message: ConversationMessage) => messages.slice(0, messages.findIndex(item => item.id === message.id)).reverse().find(item => item.role === 'user')
+  const saveAnswer = async (message: ConversationMessage) => {
     if (!activeThread || !user) return
-    const index = activeThread.messages.findIndex(item => item.id === message.id)
-    const source = activeThread.messages.slice(0, index).reverse().find(item => item.role === 'user')
-    if (!source) return
-    const attachments = turnImages.current.get(source.id) ?? (source.imageCount ? await loadResolverImages(user.id, workspaceId, source.id).catch(() => []) : [])
-    onSave({ question: source.text, answer: message.text, category: activeThread.category,
-      sourceKey: `${activeThread.id}:${message.id}`, images: attachments, expectedImages: source.imageCount ?? 0 })
+    const source = sourceFor(message)
+    if (!source) { setError('Carga los mensajes anteriores para recuperar la pregunta de esta respuesta.'); return }
+    try {
+      let attachments = source.metadata.imageCount ? await loadResolverImages(user.id, conversationScopeKey(conversation.scope), source.id).catch(() => []) : []
+      if (!attachments.length && source.metadata.imageCount) attachments = await loadResolverImages(user.id, workspaceId, source.id).catch(() => [])
+      if (!attachments.length && source.metadata.attachmentsReady) attachments = await loadMessageImages(source)
+      onSave({ question: source.content, answer: message.content, category: source.metadata.category ?? category,
+        sourceKey: `${activeThread.id}:${message.id}`, images: attachments, expectedImages: source.metadata.imageCount ?? 0 })
+    } catch { setError('No pudimos recuperar las imágenes de esta pregunta. Reintenta con conexión.') }
   }
-
-  const clearHistory = async () => {
-    if (busy || !window.confirm('¿Borrar todas las conversaciones de este espacio?')) return
-    const ids = threads.flatMap(thread => thread.messages.map(message => message.remoteId).filter((id): id is string => Boolean(id)))
-    if (user) void clearResolverImages(user.id, workspaceId, threads.flatMap(thread => thread.messages.map(message => message.id))).catch(() => {})
-    setThreads([]); startNew()
-    if (user && workspaceId === 'general') localStorage.removeItem(`${LEGACY_HISTORY_PREFIX}${user.id}`)
-    if (user && supabase && ids.length) await supabase.from('ai_queries').delete().eq('user_id', user.id).in('id', ids)
-  }
-
-  const stages = category === 'Matemáticas'
-    ? ['Pensando en el procedimiento…', 'Calculando paso a paso…', 'Comprobando el resultado…']
-    : ['Pensando en tu pregunta…', 'Relacionando los conceptos…', 'Preparando una explicación clara…']
-
+  const stages = category === 'Matemáticas' ? ['Pensando en el procedimiento…', 'Calculando paso a paso…', 'Comprobando el resultado…'] :
+    ['Pensando en tu pregunta…', 'Relacionando los conceptos…', 'Preparando una explicación clara…']
   return <section className="solver-shell">
-    <div className="solver-heading"><p className="solver-subtitle">Pregunta, adjunta imágenes y sigue profundizando en la misma conversación.</p><div className="solver-heading-actions">{threads.length > 0 && <button ref={historyToggleRef} className="secondary solver-history-toggle" aria-controls="solver-history" aria-expanded={historyOpen} onClick={() => setHistoryOpen(value => !value)}>{historyOpen ? 'Ocultar conversaciones' : 'Mostrar conversaciones'}</button>}{activeThread && <button className="secondary" onClick={startNew} disabled={busy}>＋ Nuevo chat</button>}</div></div>
-    {historyOpen && threads.length > 0 && <button className="solver-history-backdrop" aria-label="Cerrar conversaciones" onClick={() => { setHistoryOpen(false); historyToggleRef.current?.focus() }}/>}
-    <div className={`solver-layout ${threads.length ? 'has-history' : 'no-history'} ${historyOpen && threads.length ? 'history-open' : 'history-hidden'}`}>
-      {historyOpen && threads.length > 0 && <aside ref={historyRef} className="solver-history" id="solver-history" role={window.matchMedia('(max-width: 700px)').matches ? 'dialog' : undefined} aria-modal={window.matchMedia('(max-width: 700px)').matches ? true : undefined} aria-label="Conversaciones recientes" tabIndex={-1}><div className="solver-history-head"><strong>Conversaciones</strong><button onClick={clearHistory} disabled={busy}>Limpiar</button><button className="solver-history-close" aria-label="Cerrar conversaciones" onClick={() => { setHistoryOpen(false); historyToggleRef.current?.focus() }}><Icon name="close"/></button></div><div className="solver-thread-list">{threads.slice(0, 25).map(thread => <button key={thread.id} className={activeId === thread.id ? 'active' : ''} onClick={() => openThread(thread)} disabled={busy}><span>✦</span><span><strong>{thread.title}</strong><small>{thread.category} · {thread.messages.filter(message => message.role === 'assistant').length} respuestas</small></span></button>)}</div></aside>}
-      <div className="solver-chat"><div className="solver-messages" ref={messageListRef} aria-label="Conversación con Nexo IA">
-        {activeThread?.messages.length ? activeThread.messages.map(message => message.role === 'user'
-          ? <div className="solver-turn user" key={message.id}><div className="solver-user-bubble"><p>{message.text}</p>{Boolean(message.imageCount) && <small>📎 {message.imageCount} {message.imageCount === 1 ? 'imagen' : 'imágenes'}</small>}</div></div>
-          : <div className="solver-turn assistant" key={message.id}><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-assistant-bubble"><div className="solver-message-head"><strong>Nexo IA</strong><div className="solver-answer-actions"><button onClick={() => copyAnswer(message)}>{copiedId === message.id ? '✓ Copiado' : 'Copiar'}</button><button onClick={() => void saveAnswer(message)}>Guardar</button></div></div><div className="solver-answer"><ResponseRenderer text={message.text}/></div></div></div>)
-          : <div className="solver-empty"><span>✦</span><h3>¿Qué quieres resolver?</h3><p>Escribe una duda o adjunta una imagen. Después puedes seguir preguntando sin perder el contexto.</p><div className="solver-prompts">{(suggestions[category] || suggestions.General).map(suggestion => <button key={suggestion} onClick={() => { setQuestion(suggestion); textareaRef.current?.focus() }}>{suggestion} ↗</button>)}</div></div>}
-        {busy && <div className="solver-turn assistant solver-thinking" role="status"><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-thinking-bubble"><span className="solver-thinking-dots" aria-hidden="true"><i/><i/><i/></span><strong>{stages[thinkingStage]}</strong><small>Nexo está preparando tu respuesta</small></div></div>}
-        {error && <div className="solver-error" role="alert"><span>{error}</span>{failedRequest && <button onClick={() => void requestAnswer(failedRequest)}>Reintentar</button>}</div>}
-      </div>
-      <ChatComposer className="solver-composer" value={question} onChange={setQuestion} onSend={send} label="Escribe tu pregunta" placeholder="Pregunta lo que quieras resolver…" busy={busy} textareaRef={textareaRef} images={images} onImport={files => void importImages(files)} onRemove={id => setImages(current => current.filter(item => item.id !== id))} imageBusy={imageBusy} deep={deep} onDeepChange={setDeep} sendLabel="Enviar pregunta" enterToSend>
-        <div className="solver-categories" role="group" aria-label="Materia">{categories.map(item => <button key={item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)} disabled={busy}>{item}</button>)}</div>
-      </ChatComposer></div>
-    </div>
+    <div className="solver-heading"><p className="solver-subtitle">Pregunta, adjunta imágenes y sigue profundizando en la misma conversación.</p></div>
+    <ConversationTools conversation={conversation} busy={busy} resolver context={workspaceId === 'general' ? 'General' : 'General · espacio actual'}/>
+    <div className="solver-layout no-history history-hidden"><div className="solver-chat"><div className="solver-messages" ref={messageListRef} aria-label="Conversación con Nexo IA">
+      <EarlierMessages conversation={conversation}/>
+      {messages.length ? messages.map(message => message.role === 'user'
+        ? <div className="solver-turn user" key={message.id}><div className="solver-user-bubble"><p>{message.content}</p>{!!message.metadata.imageCount && <small>📎 {message.metadata.imageCount} {message.metadata.imageCount === 1 ? 'imagen' : 'imágenes'}</small>}</div></div>
+        : <div className="solver-turn assistant" key={message.id}><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-assistant-bubble"><div className="solver-message-head"><strong>Nexo IA</strong><div className="solver-answer-actions"><button onClick={() => void copyAnswer(message)}>{copiedId === message.id ? '✓ Copiado' : 'Copiar'}</button><button onClick={() => void saveAnswer(message)}>Guardar</button>{onPractice && <button onClick={() => onPractice(sourceFor(message)?.content ?? activeThread?.title ?? '', message.content)}>Practicar esto</button>}</div></div><div className="solver-answer"><ResponseRenderer text={message.content}/></div></div></div>)
+        : <div className="solver-empty"><span>✦</span><h3>¿Qué quieres resolver?</h3><p>Escribe una duda o adjunta una imagen. Después puedes seguir preguntando sin perder el contexto.</p><div className="solver-prompts">{(suggestions[category] || suggestions.General).map(suggestion => <button key={suggestion} onClick={() => { setQuestion(suggestion); textareaRef.current?.focus() }}>{suggestion} ↗</button>)}</div></div>}
+      {busy && <div className="solver-turn assistant solver-thinking" role="status"><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-thinking-bubble"><span className="solver-thinking-dots" aria-hidden="true"><i/><i/><i/></span><strong>{stages[thinkingStage]}</strong><small>Nexo está preparando tu respuesta</small></div></div>}
+      {error && <div className="solver-error" role="alert"><span>{error}</span>{failedRequest && <button onClick={() => void requestAnswer(failedRequest)}>Reintentar</button>}</div>}
+    </div><ChatComposer className="solver-composer" value={question} onChange={setQuestion} onSend={send} label="Escribe tu pregunta" placeholder="Pregunta lo que quieras resolver…" busy={busy} textareaRef={textareaRef} images={images} onImport={files => void importImages(files)} onRemove={id => setImages(current => current.filter(item => item.id !== id))} imageBusy={imageBusy} deep={deep} onDeepChange={setDeep} sendLabel="Enviar pregunta" enterToSend>
+      <div className="solver-categories" role="group" aria-label="Materia">{categories.map(item => <button key={item} className={category === item ? 'active' : ''} onClick={() => setCategory(item)} disabled={busy}>{item}</button>)}</div>
+    </ChatComposer></div></div>
   </section>
 }

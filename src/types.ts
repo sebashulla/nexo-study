@@ -29,7 +29,8 @@ export type StudyArtifact = {
   errorMessage?: string
 }
 export type LearningStatus = 'unknown' | 'learning' | 'known' | 'mastered'
-export type LearningConcept = { key: string; label: string; materialId: string; status: LearningStatus; confidence: number; attempts: number; correctAttempts: number; updatedAt: string }
+export type LearningConcept = { key: string; label: string; materialId: string; status: LearningStatus; confidence: number; attempts: number; correctAttempts: number; updatedAt: string;
+  pendingEvidenceIds?: string[]; evidenceManaged?: boolean; evidenceCount?: number; lastSeen?: string; lastPracticed?: string; lastResult?: string; legacyAttempts?: number }
 export type StudySession = { id: string; courseId: string; objective: string; durationMinutes: 15 | 30 | 45; status: 'planned' | 'active' | 'completed'; plan: { type: string; minutes: number; materialId?: string }[]; results: Record<string, number>; createdAt: string; completedAt?: string }
 export type StudySessionEvent = { id: string; sessionId: string; activityType: 'flashcard_answer' | 'quiz_answer' | 'written_answer' | 'session_complete'; materialId?: string; result: { correct?: boolean; rating?: string }; createdAt: string }
 

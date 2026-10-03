@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { Course, SavedSolution, StudyArtifact } from './types'
 import { artifactPage } from './lib/artifactPrompts'
+import { artifactConcept } from './lib/artifactScope'
 import { EmptyState } from './EmptyState'
 
 const filters = ['Todo', 'Materiales', 'Apuntes', 'Flashcards', 'Práctica', 'Exámenes', 'Soluciones'] as const
@@ -12,7 +13,7 @@ export function CourseLibrary({ course, solutions, loading, error, onRetry, onMa
 }) {
   const [filter, setFilter] = useState<typeof filters[number]>('Todo')
   const artifacts = course.materials.flatMap(material => (material.artifacts ?? [])
-    .filter(item => item.status === 'ready' && !(material.artifacts ?? []).some(other => other.status === 'ready' && other.type === item.type && artifactPage(other) === artifactPage(item) && other.version > item.version))
+    .filter(item => item.status === 'ready' && !(material.artifacts ?? []).some(other => other.status === 'ready' && other.type === item.type && artifactPage(other) === artifactPage(item) && artifactConcept(other) === artifactConcept(item) && other.version > item.version))
     .map(artifact => ({ material, artifact })))
   const selected = artifacts.filter(({ artifact }) => filter === 'Todo' ||
     filter === 'Apuntes' && ['notes', 'summary'].includes(artifact.type) || filter === 'Flashcards' && artifact.type === 'flashcards' ||
@@ -24,7 +25,7 @@ export function CourseLibrary({ course, solutions, loading, error, onRetry, onMa
     <div className="library-filters" role="group" aria-label="Filtrar biblioteca">{filters.map(item => <button className="secondary" key={item} aria-pressed={filter === item} onClick={() => setFilter(item)}>{item}</button>)}</div>
     {error && <p role="status">{error} <button className="text-button" onClick={onRetry}>Reintentar</button></p>}
     {showMaterials && course.materials.map(material => <button className="library-entry secondary" key={material.id} onClick={() => onMaterial(material.id)}><strong>{material.title}</strong><span>Material · {material.sourceType === 'pdf' ? `${material.pageCount ?? '…'} páginas` : 'Apuntes originales'}</span></button>)}
-    {selected.map(({ material, artifact }) => <button className="library-entry secondary" key={artifact.id} onClick={() => onArtifact(material.id, artifact)}><strong>{labels[artifact.type]}</strong><span>{material.title}{artifactPage(artifact) ? ` · Página ${artifactPage(artifact)}` : ''}</span></button>)}
+    {selected.map(({ material, artifact }) => <button className="library-entry secondary" key={artifact.id} onClick={() => onArtifact(material.id, artifact)}><strong>{artifactConcept(artifact) ? `Práctica · ${artifactConcept(artifact)}` : labels[artifact.type]}</strong><span>{material.title}{artifactPage(artifact) ? ` · Página ${artifactPage(artifact)}` : ''}</span></button>)}
     {showSolutions && solutions.map(solution => <button className="library-entry secondary" key={solution.id} onClick={() => onSolution(solution)}><strong>{solution.question}</strong><span>Solución · {solution.category} · {solution.attachments.length} imágenes · {new Date(solution.createdAt).toLocaleDateString('es-PE')}</span></button>)}
     {loading && <p role="status">Cargando soluciones…</p>}
     {!loading && empty && <EmptyState title="Aún no hay recursos en este filtro" text="Guarda soluciones desde Resolver o prepara métodos desde un material para encontrarlos aquí."/>}

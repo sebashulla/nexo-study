@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
-import type { Course, Material, MaterialTopic } from './types'
+import type { Course, Material, MaterialTopic, QuizQuestion } from './types'
 import type { RecallRating } from './lib/learningState'
 import type { MaterialStudyMode } from './lib/router'
-import { callAI } from './lib/aiClient'
+import { aiErrorMessage, callAI } from './lib/aiClient'
 import { contextForQuestion } from './lib/learningContext'
 import { loadPageText, searchRemoteContext, signedPdfUrl } from './lib/learningRepository'
 import { useAuth } from './auth/AuthContext'
@@ -16,8 +16,17 @@ import { quickSummaryFor } from './lib/quickSummary'
 import { ChatComposer } from './ChatComposer'
 import { ResponseRenderer } from './ResponseRenderer'
 
+import { conversationScopeKey } from './lib/conversationTypes'
+import { useConversationDraft } from './hooks/useConversationDraft'
+import { useConversation } from './hooks/useConversation'
+import { ConversationTools, EarlierMessages } from './ConversationTools'
+import { buildMemoryContext, matchQuestionConcept } from './lib/learningMemory'
+import { makeEvidence, queueEvidence } from './lib/learningGraphRepository'
+import type { LearningMemory } from './lib/learningState'
+
 type Source = { materialId: string; materialTitle: string; pageStart: number; pageEnd: number }
-type Turn = { question: string; answer: string; sources: Source[] }
+type Turn = { question: string; answer: string; sources: Source[]; id: string; concept?: string }
+
 
 const methods: { mode: MaterialStudyMode; title: string; description: string }[] = [
   { mode: 'learn', title: 'Aprender con Nexo', description: 'Recorre los conceptos con un tutor guiado.' },
@@ -38,9 +47,15 @@ function pdfPageUrl(url: string, page: number) {
   return `${url.split('#')[0]}#page=${page}`
 }
 
-export function MaterialWorkspace({ course, material, localPdf, initialPage, initialArtifactId, onBack, onStudy, onRetry, onAnalyzeMore, onVisualAnalysis, onPageArtifact, onRecall, onPageAnswer, onPageReveal }: {
+export function MaterialWorkspace({ course, material, workspaceId, initialThreadId, practiceSeed, memory = {}, onPractice, onAskQuiz, localPdf, initialPage, initialArtifactId, onBack, onStudy, onRetry, onAnalyzeMore, onVisualAnalysis, onPageArtifact, onRecall, onPageAnswer, onPageReveal }: {
   course: Course
   material: Material
+  workspaceId: string
+  initialThreadId?: string
+  practiceSeed?: string
+  memory?: LearningMemory
+  onPractice?: (question: string, answer: string, concept?: string) => void
+  onAskQuiz?: (question: QuizQuestion, selected: number) => void
   localPdf?: File
   initialPage?: number
   initialArtifactId?: string
@@ -64,8 +79,16 @@ export function MaterialWorkspace({ course, material, localPdf, initialPage, ini
   const [nexoPercent, setNexoPercent] = useState(() => {
     try { return Number(localStorage.getItem('nexo-material-split-v1')) || 40 } catch { return 40 }
   })
-  const [question, setQuestion] = useState('')
-  const [turns, setTurns] = useState<Turn[]>([])
+  const conversation = useConversation({ scope: 'material', workspaceId, courseId: course.id, materialId: material.id }, initialThreadId, !!practiceSeed)
+  const [question, setQuestion] = useConversationDraft(conversation.userId, conversationScopeKey(conversation.scope), practiceSeed ? 'Ayúdame a entender este error.' : '')
+  const turns: Turn[] = conversation.messages.filter(item => item.role === 'assistant').map(message => {
+    const previous = conversation.messages.slice(0, conversation.messages.indexOf(message)).reverse().find(item => item.role === 'user')
+    return { question: previous?.content ?? '', answer: message.content, sources: message.metadata.sources ?? [], id: message.id, concept: message.metadata.concept }
+  })
+  const lastMessage = conversation.messages[conversation.messages.length - 1]
+  const unanswered = lastMessage?.role === 'user' ? lastMessage : undefined
+  const previousSelection = useRef(conversation.activeId)
+  const [failedMessage, setFailedMessage] = useState<{ id: string; threadId: string; text: string }>()
   const [busy, setBusy] = useState(false)
   const [chatError, setChatError] = useState('')
   const [visualBusy, setVisualBusy] = useState(false)
@@ -144,9 +167,20 @@ export function MaterialWorkspace({ course, material, localPdf, initialPage, ini
     try { localStorage.setItem('nexo-material-split-v1', String(nexoPercent)) } catch { /* Keep the current split. */ }
   }, [nexoPercent])
 
+  useEffect(() => {
+    if (practiceSeed && initialPage) setChatPage(initialPage)
+    if (initialThreadId || practiceSeed) { setPanelTab('chat'); setMobileTab('nexo'); setPanelOpen(true) }
+  }, [initialThreadId, practiceSeed])
+  useEffect(() => {
+    if (previousSelection.current !== conversation.activeId && !conversation.activeId) { setQuestion(practiceSeed ? 'Ayúdame a entender este error.' : ''); setFailedMessage(undefined) }
+    previousSelection.current = conversation.activeId
+    const last = conversation.messages.filter(item => item.role === 'user').slice(-1)[0]
+    if (last?.metadata.page) setChatPage(last.metadata.page)
+  }, [conversation.activeId, conversation.messages.filter(item => item.role === 'user').slice(-1)[0]?.id])
+
   const send = async () => {
     const q = question.trim()
-    if (!q || busy || (!ready && !chatPage)) return
+    if (!q || busy || conversation.loading || (!ready && !chatPage)) return
     const local = contextForQuestion(q, [material])
     setBusy(true); setChatError('')
     try {
@@ -155,12 +189,21 @@ export function MaterialWorkspace({ course, material, localPdf, initialPage, ini
       const remote = chatPage ? { context: `[${material.title} · página ${chatPage}]\n${pageText}`, sources: [{ materialId: material.id, materialTitle: material.title, pageStart: chatPage, pageEnd: chatPage }] } : await searchRemoteContext(course, q, material.id).catch(() => local)
       const selected = remote.context ? remote : local
       if (!selected.context) { setChatError('Nexo todavía no tiene páginas preparadas para responder.'); return }
+      const message = failedMessage?.text === q ? failedMessage : { ...conversation.append('user', q, { page: chatPage ?? undefined, practiceContext: practiceSeed, concept: practiceSeed?.match(/Concepto: ([^\n]+)/)?.[1] ?? matchQuestionConcept(q, course, material.id)?.label }), text: q }
+      setFailedMessage(message)
       const answer = await callAI({ task: 'solve', question: q, category: course.name,
         courseId: course.id, materialId: material.id, page: chatPage ?? undefined,
-        context: `Material: ${material.title}. Usa solo estos fragmentos como fuente. Si no contienen la respuesta, dilo. Cita título y página cuando corresponda.\n\n${selected.context}` })
-      setTurns(current => [...current, { question: q, answer, sources: selected.sources }])
+        context: buildMemoryContext({ course, materialId: material.id, memory, messages: conversation.messages,
+          retrieval: selected.context, seed: practiceSeed ?? conversation.messages.find(item => item.metadata.practiceContext)?.metadata.practiceContext }) })
+      conversation.append('assistant', answer, { sources: selected.sources, page: chatPage ?? undefined, concept: practiceSeed?.match(/Concepto: ([^\n]+)/)?.[1] ?? matchQuestionConcept(q, course, material.id)?.label }, [], message.threadId)
+      setFailedMessage(undefined)
+      const match = matchQuestionConcept(q, course, material.id)
+      if (match) {
+        await conversation.sync()
+        queueEvidence(conversation.userId, { ...makeEvidence(course.id, material.id, match.label, 'question', 'chat', message.id), threadId: message.threadId, messageId: message.id })
+      }
       setQuestion('')
-    } catch { setChatError('Nexo no pudo responder ahora. Tu pregunta sigue aquí para que puedas reintentar.') }
+    } catch (cause) { setChatError(aiErrorMessage(cause)) }
     finally { setBusy(false) }
   }
 
@@ -182,8 +225,8 @@ export function MaterialWorkspace({ course, material, localPdf, initialPage, ini
       const images = await renderPdfPages(file, selected)
       const text = await callAI({ task: 'solve', category: course.name, courseId: course.id, materialId: material.id,
         question: `Analiza solo ${selected.length === 1 ? `la página ${first}` : `las páginas ${first}–${last}`} de este material escaneado. Extrae los conceptos académicos visibles y explica lo que se puede afirmar. Si algo no se lee, dilo. No inventes contenido.`, images })
-      setTurns(current => [...current, { question: `Análisis visual · ${selected.length === 1 ? `página ${first}` : `páginas ${first}–${last}`}`, answer: text,
-        sources: [{ materialId: material.id, materialTitle: material.title, pageStart: first, pageEnd: last }] }])
+      const visualMessage = conversation.append('user', `Análisis visual · ${selected.length === 1 ? `página ${first}` : `páginas ${first}–${last}`}`, { page: first })
+      conversation.append('assistant', text, { sources: [{ materialId: material.id, materialTitle: material.title, pageStart: first, pageEnd: last }] }, [], visualMessage.threadId)
       onVisualAnalysis?.(selected, text)
       setPanelTab('chat'); setMobileTab('nexo'); setPanelOpen(true)
     } catch (error) {
@@ -243,7 +286,7 @@ export function MaterialWorkspace({ course, material, localPdf, initialPage, ini
       {panelOpen && <><div className="material-divider" role="separator" aria-label="Ajustar ancho de Nexo" aria-orientation="vertical" aria-valuemin={30} aria-valuemax={60} aria-valuenow={nexoPercent} tabIndex={0} onPointerDown={startResize} onPointerMove={resize} onKeyDown={event => { if (event.key === 'ArrowLeft') setNexoPercent(value => Math.min(60, value + 5)); if (event.key === 'ArrowRight') setNexoPercent(value => Math.max(30, value - 5)) }}/><aside id={`material-nexo-${material.id}`} role="tabpanel" aria-labelledby={`nexo-tab-${material.id}`} className={`material-nexo-panel ${mobileTab === 'nexo' ? 'mobile-active' : ''}`} aria-label="Nexo IA del material">
         <div className="material-nexo-head"><strong>Nexo IA</strong><div role="tablist" onKeyDown={tabKeyboard} aria-label="Herramientas de Nexo"><button id={`nexo-chat-tab-${material.id}`} aria-controls={`nexo-chat-${material.id}`} role="tab" aria-selected={panelTab === 'chat'} className={panelTab === 'chat' ? 'active' : ''} onClick={() => setPanelTab('chat')}>Chat</button><button id={`nexo-content-tab-${material.id}`} aria-controls={`nexo-content-${material.id}`} role="tab" aria-selected={panelTab === 'content'} className={panelTab === 'content' ? 'active' : ''} onClick={() => setPanelTab('content')}>Contenido</button></div></div>
         {panelTab === 'content' ? <div id={`nexo-content-${material.id}`} role="tabpanel" aria-labelledby={`nexo-content-tab-${material.id}`} className="material-nexo-content">
-          <h3>¿Qué quieres hacer con este material?</h3>{pageArtifact && <PageArtifactView key={pageArtifact.id} artifact={pageArtifact} onClose={() => setPageArtifactId('')} onRecall={onRecall} onReveal={index => onPageReveal(pageArtifact.id, index)} onAnswer={(label, index, correct) => onPageAnswer(pageArtifact.id, label, index, correct)}/>}
+          <h3>¿Qué quieres hacer con este material?</h3>{pageArtifact && <PageArtifactView key={pageArtifact.id} artifact={pageArtifact} onAsk={onAskQuiz} onClose={() => setPageArtifactId('')} onRecall={onRecall} onReveal={index => onPageReveal(pageArtifact.id, index)} onAnswer={(label, index, correct) => onPageAnswer(pageArtifact.id, label, index, correct)}/>}
           <p>Nexo conserva el contexto de este documento y prepara cada método cuando lo necesites.</p>
           {!ready && <p role="status">{material.documentKind === 'scan' ? 'Analiza algunas páginas para habilitar los métodos de estudio.' : 'Disponible cuando Nexo termine de analizar este material.'}</p>}
           <details className="material-content-section" open={sectionOpen('Resumen')}><summary onClick={event => { event.preventDefault(); setOpenContentSection(value => value === 'Resumen' ? '' : 'Resumen') }}>Resumen</summary>
@@ -258,7 +301,7 @@ export function MaterialWorkspace({ course, material, localPdf, initialPage, ini
             <div className="material-topics">{material.topics?.length ? material.topics.map(topicButton) : <p>Los temas aparecerán cuando Nexo termine de leer el documento.</p>}</div>
           </details>
           {methodGroups.map(group => <details className="material-content-section material-method-group" key={group.title} open={sectionOpen(group.title)}><summary onClick={event => { event.preventDefault(); setOpenContentSection(value => value === group.title ? '' : group.title) }}>{group.title}</summary><div className="material-methods">{methods.filter(method => group.modes.includes(method.mode)).map(method => <button key={method.mode} disabled={!ready} onClick={() => onStudy(method.mode)}><strong>{method.title}</strong><span>{method.description}{material.artifacts?.some(artifact => artifact.status === 'ready' && (artifact.type === method.mode || (method.mode === 'multiple-choice' && artifact.type === 'multiple_choice') || (method.mode === 'written' && artifact.type === 'written_questions') || (method.mode === 'fill-blanks' && artifact.type === 'fill_blanks'))) ? ' · Listo en tu biblioteca' : ''}</span></button>)}</div></details>)}
-        </div> : <div id={`nexo-chat-${material.id}`} role="tabpanel" aria-labelledby={`nexo-chat-tab-${material.id}`} className="material-nexo-chat"><div className="material-chat-turns">{partial && ready && <p role="status">Nexo responderá usando {contextPageCount} {contextPageCount === 1 ? 'página preparada' : 'páginas preparadas'}.</p>}{turns.length ? turns.map((turn, index) => <article key={index}><div className="material-chat-question">{turn.question}</div><div className="material-chat-answer"><ResponseRenderer text={turn.answer}/>{turn.sources.length > 0 && <div className="material-chat-sources">{turn.sources.map((source, sourceIndex) => <button key={sourceIndex} onClick={() => selectPage(source.pageStart)}>{source.materialTitle} · página {source.pageStart}</button>)}</div>}</div></article>) : <p>{ready ? 'Pregunta sobre este material. Nexo buscará fragmentos relevantes y te mostrará las páginas usadas.' : 'Analiza páginas de este documento para comenzar a preguntar a Nexo.'}</p>}{busy && <p role="status">Nexo está revisando el material…</p>}</div><ChatComposer className="material-chat-composer" value={question} onChange={setQuestion} onSend={() => void send()} label="Preguntar sobre este material" placeholder={ready ? 'Pregunta a Nexo sobre este material…' : 'Prepara algunas páginas para conversar…'} busy={busy} disabled={!ready && !chatPage}>{chatPage && <div className="page-chat-context">Contexto: Página {chatPage}<button className="text-button" onClick={() => setChatPage(null)}>Usar todo el material</button></div>}{chatError && <p role="alert">{chatError}</p>}</ChatComposer></div>}
+        </div> : <div id={`nexo-chat-${material.id}`} role="tabpanel" aria-labelledby={`nexo-chat-tab-${material.id}`} className="material-nexo-chat"><ConversationTools conversation={conversation} busy={busy || visualBusy} context={`${course.name} › ${title}`}/><div className="material-chat-turns"><EarlierMessages conversation={conversation}/>{partial && ready && <p role="status">Nexo responderá usando {contextPageCount} {contextPageCount === 1 ? 'página preparada' : 'páginas preparadas'}.</p>}{turns.length ? turns.map(turn => <article key={turn.id}><div className="material-chat-question">{turn.question}</div><div className="material-chat-answer"><ResponseRenderer text={turn.answer}/>{turn.sources.length > 0 && <div className="material-chat-sources">{turn.sources.map((source, sourceIndex) => <button key={sourceIndex} onClick={() => selectPage(source.pageStart)}>{source.materialTitle} · página {source.pageStart}</button>)}</div>}{onPractice && <button className="text-button chat-practice" onClick={() => onPractice(turn.question, turn.answer, turn.concept)}>Practicar esto</button>}</div></article>) : <p>{ready ? 'Pregunta sobre este material. Nexo buscará fragmentos relevantes y te mostrará las páginas usadas.' : 'Analiza páginas de este documento para comenzar a preguntar a Nexo.'}</p>}{unanswered && <div className="material-chat-question">{unanswered.content}</div>}{busy && <p role="status">Nexo está revisando el material…</p>}</div><ChatComposer className="material-chat-composer" value={question} onChange={setQuestion} onSend={() => void send()} label="Preguntar sobre este material" placeholder={ready ? 'Pregunta a Nexo sobre este material…' : 'Prepara algunas páginas para conversar…'} busy={busy} disabled={!ready && !chatPage}>{chatPage && <div className="page-chat-context">Contexto: Página {chatPage}<button className="text-button" onClick={() => setChatPage(null)}>Usar todo el material</button></div>}{chatError && <div role="alert"><p>{chatError}</p><button className="text-button" onClick={() => void send()}>Reintentar</button></div>}</ChatComposer></div>}
       </aside></>}
     </div>
     {moreOpen && <Dialog title="Preparar más páginas" onClose={() => setMoreOpen(false)} className="modal"><div className="modal-head"><h2>Preparar más páginas</h2><button aria-label="Cerrar diálogo" onClick={() => setMoreOpen(false)}>×</button></div><p>{availablePages} de {material.pageCount} páginas preparadas. Un rango grande puede tardar más; los recursos de IA se crean solo cuando los pides.</p><div className="solution-actions"><button className="secondary" onClick={() => prepareMore(40)}>Siguientes 40</button><button className="secondary" onClick={() => prepareMore(80)}>Siguientes 80</button><button className="secondary" onClick={() => prepareMore('all')}>Todo lo pendiente</button></div><label>Desde<input aria-label="Inicio del rango" type="number" min={1} max={material.pageCount} value={moreStart} onChange={event => setMoreStart(Number(event.target.value))}/></label><label>Hasta<input aria-label="Final del rango" type="number" min={1} max={material.pageCount} value={moreEnd} onChange={event => setMoreEnd(Number(event.target.value))}/></label><button className="primary" onClick={() => prepareMore('range')}>Preparar rango</button>{moreError && <p role="alert">{moreError}</p>}</Dialog>}

@@ -14,6 +14,7 @@ import './styles.css'
 import './responsive.css'
 import './navigation.css'
 import './mobile.css'
+import './memory.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

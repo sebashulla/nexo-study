@@ -11,12 +11,12 @@ export function conceptKey(materialId: string, concept: string) {
   return `${materialId}:${normalized || 'concepto'}`
 }
 
-export function applyRecall(memory: LearningMemory, materialId: string, label: string, rating: RecallRating): LearningMemory {
+export function applyRecall(memory: LearningMemory, materialId: string, label: string, rating: RecallRating, weight = 1): LearningMemory {
   const key = conceptKey(materialId, label)
   const previous = memory[key]
   const attempts = (previous?.attempts ?? 0) + 1
   const correctAttempts = (previous?.correctAttempts ?? 0) + (rating === 'good' || rating === 'easy' ? 1 : 0)
-  const confidence = Math.max(0, Math.min(1, Math.round(((previous?.confidence ?? 0) * .64 + score[rating] * .36) * 1000) / 1000))
+  const confidence = Math.max(0, Math.min(1, Math.round(((previous?.confidence ?? 0) * (1 - .36 * weight) + score[rating] * .36 * weight) * 1000) / 1000))
   let status: LearningStatus = 'learning'
   if (attempts >= 3 && confidence >= .82) status = 'mastered'
   else if (attempts >= 2 && confidence >= .53) status = 'known'

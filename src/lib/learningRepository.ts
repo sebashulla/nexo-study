@@ -2,6 +2,7 @@ import type { Course, Material, MaterialChunk, MaterialTopic, SavedSolution, Sol
 import type { StudyActivity } from './studyProgress'
 import type { LearningMemory } from './learningState'
 import { supabase } from './supabase'
+import { mapConcept } from './learningGraphRepository'
 
 export async function searchStudyArtifacts(userId: string, types: StudyArtifactType[], materialIds: string[]) {
   if (!supabase || (!types.length && !materialIds.length)) return []
@@ -11,7 +12,7 @@ export async function searchStudyArtifacts(userId: string, types: StudyArtifactT
   const { data, error } = await query
   if (error) throw error
   return (data ?? []).map(row => ({ id: row.id as string, courseId: row.course_id as string, materialId: row.source_material_id as string,
-    type: row.type as StudyArtifactType, page: row.scope && typeof row.scope === 'object' && !Array.isArray(row.scope) && typeof row.scope.page === 'number' ? row.scope.page : undefined }))
+    type: row.type as StudyArtifactType, concept: row.scope && typeof row.scope === 'object' && !Array.isArray(row.scope) && row.scope.kind === 'concept' && typeof row.scope.label === 'string' ? row.scope.label : undefined, page: row.scope && typeof row.scope === 'object' && !Array.isArray(row.scope) && typeof row.scope.page === 'number' ? row.scope.page : undefined }))
 }
 
 export async function renameMaterial(userId: string, courseId: string, materialId: string, title: string) {
@@ -117,7 +118,7 @@ export async function loadStudySignals(userId: string, courseIds: string[]) {
   if (!courseIds.length) return { activity: {}, memory: {}, sessions: [] }
   const [progressResult, learningResult, sessionResult] = await Promise.all([
     supabase.from('study_progress').select('material_id,activity').eq('user_id', userId).in('course_id', courseIds),
-    supabase.from('learning_state').select('material_id,concept_key,concept_label,status,confidence,attempts,correct_attempts,updated_at').eq('user_id', userId).in('course_id', courseIds),
+    supabase.from('learning_state').select('*').eq('user_id', userId).in('course_id', courseIds),
     supabase.from('study_sessions').select('id,course_id,objective,duration_minutes,status,plan,results,created_at,completed_at').eq('user_id', userId).in('course_id', courseIds),
   ])
   const error = progressResult.error || learningResult.error || sessionResult.error
@@ -125,12 +126,7 @@ export async function loadStudySignals(userId: string, courseIds: string[]) {
   const activity: StudyActivity = Object.fromEntries((progressResult.data ?? [])
     .filter(row => row.activity && typeof row.activity === 'object' && !Array.isArray(row.activity))
     .map(row => [row.material_id, row.activity]))
-  const memory: LearningMemory = Object.fromEntries((learningResult.data ?? []).map(row => [
-    `${row.material_id}:${row.concept_key}`,
-    { key: `${row.material_id}:${row.concept_key}`, label: row.concept_label, materialId: row.material_id,
-      status: row.status, confidence: Number(row.confidence), attempts: row.attempts,
-      correctAttempts: row.correct_attempts, updatedAt: row.updated_at },
-  ]))
+  const memory: LearningMemory = Object.fromEntries((learningResult.data ?? []).map(row => { const concept = mapConcept(row); return [concept.key, concept] }))
   const sessions: StudySession[] = (sessionResult.data ?? []).map(row => ({
     id: row.id, courseId: row.course_id, objective: row.objective, durationMinutes: row.duration_minutes,
     status: row.status, plan: Array.isArray(row.plan) ? row.plan : [], results: row.results ?? {},
@@ -276,7 +272,7 @@ export async function saveLearningState(userId: string, courses: Course[], memor
   const courseForMaterial = new Map(courses.flatMap(course => course.materials.map(material => [material.id, course.id] as const)))
   const rows = Object.values(memory).flatMap(concept => {
     const courseId = courseForMaterial.get(concept.materialId)
-    if (!courseId) return []
+    if (!courseId || concept.evidenceManaged) return []
     return [{ user_id: userId, course_id: courseId, material_id: concept.materialId,
       concept_key: concept.key.slice(concept.materialId.length + 1), concept_label: concept.label,
       status: concept.status, confidence: concept.confidence, attempts: concept.attempts,

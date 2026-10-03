@@ -1,4 +1,4 @@
-// Run against a disposable Supabase project after migrations 001–009.
+// Run against a disposable Supabase project after migrations 001–010.
 // Uses ordinary user sessions. No service role and no existing content is deleted.
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
@@ -32,7 +32,9 @@ const fixtures = ids.map(userId => {
   const courseId = `security-${run}-${userId}`
   const materialId = `material-${run}-${userId}`
   const solutionId = randomUUID()
-  return { userId, courseId, materialId, solutionId, uploadMaterialId: `${materialId}-upload-target`,
+  const threadId = randomUUID(), messageId = randomUUID()
+  const conversationImage = `${userId}/${threadId}/${messageId}/0.png`
+  return { userId, courseId, materialId, solutionId, threadId, messageId, conversationImage, uploadMaterialId: `${materialId}-upload-target`,
     pdf: `${userId}/${courseId}/${materialId}/original.pdf`,
     image: `${userId}/${courseId}/solutions/${solutionId}/fixture.png`,
     rows: {
@@ -40,16 +42,21 @@ const fixtures = ids.map(userId => {
       materials: { user_id: userId, course_id: courseId, id: materialId, title: 'Security fixture', content: 'Private text', source_type: 'pdf', page_count: 1 },
       material_chunks: { id: randomUUID(), user_id: userId, course_id: courseId, material_id: materialId, page_start: 1, page_end: 1, content: 'Private chunk' },
       study_artifacts: { id: randomUUID(), user_id: userId, course_id: courseId, source_material_id: materialId, type: 'summary', status: 'ready', version: 1, payload: { summary: 'Private summary' } },
+      conversation_threads: { id: threadId, user_id: userId, scope: 'material', workspace_id: null, course_id: courseId, material_id: materialId, title: `Private conversation ${run}` },
+      conversation_messages: { id: messageId, user_id: userId, thread_id: threadId, role: 'user', content: 'Private learning question', metadata: { attachments: [{storagePath:conversationImage,mimeType:'image/png',name:'fixture.png',bytes:68}],attachmentsReady:false } },
+      concept_evidence: { id:randomUUID(), user_id:userId, course_id:courseId, material_id:materialId,concept_key:'private-concept',concept_label:'Private concept',source_type:'quiz',source_id:randomUUID(),result:'again',weight:1 },
+      learning_state: { user_id:userId,course_id:courseId,material_id:materialId,concept_key:'private-concept',concept_label:'Private concept',status:'weak',confidence:0,attempts:1,correct_attempts:0 },
       saved_solutions: { id: solutionId, user_id: userId, course_id: courseId, question: 'Private question', answer: 'Private answer', source_key: run, status: 'ready' },
     } }
 })
-const fixtureFiles = [{ bucket: 'study-pdfs', field: 'pdf', mime: 'application/pdf', bytes: Buffer.from('%PDF-1.4\n%%EOF') },
+const fixtureFiles = [{ bucket: 'conversation-images', field: 'conversationImage', mime:'image/png', bytes:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB3sAAAAASUVORK5CYII=', 'base64') }, { bucket: 'study-pdfs', field: 'pdf', mime: 'application/pdf', bytes: Buffer.from('%PDF-1.4\n%%EOF') },
   { bucket: 'solution-images', field: 'image', mime: 'image/png', bytes: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB3sAAAAASUVORK5CYII=', 'base64') }]
 const objectPath = (bucket, path) => `${bucket}/${path.split('/').map(encodeURIComponent).join('/')}`
 let passed = false
 try {
   for (const [index, fixture] of fixtures.entries()) {
     for (const [table, row] of Object.entries(fixture.rows)) {
+      if(table === 'learning_state') continue // Created by the evidence trigger.
       const inserted = await request(tokens[index], `/rest/v1/${table}`, 'POST', row)
       assert(inserted.ok, `Owner fixture insert failed: ${table}, HTTP ${inserted.status}`)
     }
@@ -64,23 +71,33 @@ try {
   for (const actor of [0, 1]) {
     const other = fixtures[1 - actor]
     for (const [table, row] of Object.entries(other.rows)) {
-      const filter = `user_id=eq.${other.userId}&id=eq.${encodeURIComponent(row.id)}`
+      const filter = `user_id=eq.${other.userId}&${table === 'learning_state' ? `material_id=eq.${other.materialId}&concept_key=eq.private-concept` : `id=eq.${encodeURIComponent(row.id)}`}`
       const path = `/rest/v1/${table}?${filter}`
       const own = await request(tokens[1 - actor], path)
       assert(own.ok && own.data.length === 1, `Owner must see its ${table} fixture.`)
       const read = await request(tokens[actor], path)
       assert(read.ok && Array.isArray(read.data) && read.data.length === 0, `Foreign ${table} row was visible or read check unavailable.`)
-      const patchField = table === 'courses' ? 'name' : table === 'materials' ? 'title' : table === 'material_chunks' ? 'content' : table === 'study_artifacts' ? 'payload' : 'answer'
-      const changed = await request(tokens[actor], path, 'PATCH', { [patchField]: patchField === 'payload' ? { summary: 'Unauthorized' } : 'Unauthorized' })
+      const patchField = table === 'courses' ? 'name' : table === 'materials' ? 'title' : table === 'material_chunks' ? 'content' : table === 'study_artifacts' ? 'payload' : table === 'conversation_threads' ? 'title' : table === 'conversation_messages' ? 'metadata' : table === 'learning_state' ? 'confidence' : table === 'concept_evidence' ? 'result' : 'answer'
+      const changed = await request(tokens[actor], path, 'PATCH', { [patchField]: patchField === 'payload' ? { summary: 'Unauthorized' } : patchField === 'metadata' ? {} : patchField === 'confidence' ? 1 : patchField === 'result' ? 'good' : 'Unauthorized' })
       assert(!changed.ok || Array.isArray(changed.data) && changed.data.length === 0, `Foreign ${table} UPDATE succeeded.`)
       const deleted = await request(tokens[actor], path, 'DELETE')
       assert(!deleted.ok || Array.isArray(deleted.data) && deleted.data.length === 0, `Foreign ${table} DELETE succeeded.`)
       const after = await request(tokens[1 - actor], path)
       assert(after.ok && after.data.length === 1 && JSON.stringify(after.data[0][patchField]) === JSON.stringify(own.data[0][patchField]), `Foreign ${table} fixture changed.`)
-      const forged = await request(tokens[actor], `/rest/v1/${table}`, 'POST', { ...row, id: table === 'courses' || table === 'materials' ? `forged-${randomUUID()}` : randomUUID() })
+      const forged = await request(tokens[actor], `/rest/v1/${table}`, 'POST', { ...row, ...(table === 'learning_state' ? {concept_key:'forged-concept'} : {id: table === 'courses' || table === 'materials' ? `forged-${randomUUID()}` : randomUUID()}) })
       assert(!forged.ok, `Foreign owner INSERT succeeded in ${table}.`)
       console.log(`PASS ${actor === 0 ? 'A → B' : 'B → A'} ${table}: SELECT/INSERT/UPDATE/DELETE`)
     }
+    const search = await request(tokens[actor], `/rest/v1/conversation_threads?title=ilike.*${run}*&user_id=eq.${other.userId}`)
+    assert(search.ok && search.data.length === 0, 'Foreign title search leaked a thread.')
+    const scope = {id:randomUUID(),title:'Forged relation',scope:'material',workspace_id:null,course_id:other.courseId,material_id:other.materialId}
+    const append = await request(tokens[actor], '/rest/v1/rpc/append_conversation_message', 'POST', {p_thread:scope,p_message:{id:randomUUID(),role:'user',content:'Foreign context',metadata:{}}})
+    assert(!append.ok, 'RPC accepted foreign course/material ownership.')
+    const evidenceRpc = await request(tokens[actor], '/rest/v1/rpc/record_concept_evidence','POST',{p_evidence:{...other.rows.concept_evidence,id:randomUUID(),source_id:randomUUID()}})
+    assert(!evidenceRpc.ok, 'Evidence RPC accepted foreign context.')
+    const reset = await request(tokens[actor], '/rest/v1/rpc/reset_course_learning_memory','POST',{p_course_id:other.courseId})
+    assert(!reset.ok, 'Reset RPC erased foreign memory.')
+    console.log(`PASS ${actor === 0 ? 'A → B' : 'B → A'} conversation title search and graph RPC ownership`)
     for (const file of fixtureFiles) {
       const object = objectPath(file.bucket, other[file.field])
       const ownDownload = await request(tokens[1 - actor], `/storage/v1/object/authenticated/${object}`)
@@ -97,7 +114,7 @@ try {
       assert(signed.ok, `Owner signed URL cannot download ${file.bucket}.`)
       const publicDownload = await fetch(`${base}/storage/v1/object/public/${object}`)
       assert(!publicDownload.ok, `${file.bucket} is publicly downloadable.`)
-      const foreignTarget = file.bucket === 'study-pdfs' ? `${other.userId}/${other.courseId}/${other.uploadMaterialId}/original.pdf` : `${other.userId}/${other.courseId}/solutions/${other.solutionId}/forged.png`
+      const foreignTarget = file.bucket === 'study-pdfs' ? `${other.userId}/${other.courseId}/${other.uploadMaterialId}/original.pdf` : file.bucket === 'conversation-images' ? `${other.userId}/${other.threadId}/${other.messageId}/1.png` : `${other.userId}/${other.courseId}/solutions/${other.solutionId}/forged.png`
       const forged = await request(tokens[actor], `/storage/v1/object/${objectPath(file.bucket, foreignTarget)}`, 'POST', file.bytes, file.mime)
       assert(!forged.ok, `Foreign ${file.bucket} upload succeeded.`)
       await request(tokens[actor], `/storage/v1/object/${file.bucket}`, 'DELETE', { prefixes: [other[file.field]] })
@@ -111,7 +128,7 @@ try {
   let clean = true
   for (const [index, fixture] of fixtures.entries()) {
     for (const file of fixtureFiles) {
-      const foreignTarget = file.bucket === 'study-pdfs' ? `${fixture.userId}/${fixture.courseId}/${fixture.uploadMaterialId}/original.pdf` : `${fixture.userId}/${fixture.courseId}/solutions/${fixture.solutionId}/forged.png`
+      const foreignTarget = file.bucket === 'study-pdfs' ? `${fixture.userId}/${fixture.courseId}/${fixture.uploadMaterialId}/original.pdf` : file.bucket === 'conversation-images' ? `${fixture.userId}/${fixture.threadId}/${fixture.messageId}/1.png` : `${fixture.userId}/${fixture.courseId}/solutions/${fixture.solutionId}/forged.png`
       const result = await request(tokens[index], `/storage/v1/object/${file.bucket}`, 'DELETE', { prefixes: [fixture[file.field], foreignTarget] }).catch(() => ({ ok: false }))
       if (!result.ok) clean = false
     }

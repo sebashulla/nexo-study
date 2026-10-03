@@ -1,0 +1,9 @@
+import type { Course } from '../../src/types'
+export const now = '2026-10-01T12:00:00Z'
+export const question = { question: '¿Qué velocidad permanece en el vértice?', options: ['Horizontal', 'Vertical', 'Ninguna', 'Ambas son cero'], answer: 0, explanation: 'La componente horizontal permanece y la vertical es cero.', concept: 'Movimiento parabólico', sourcePage: 2 }
+export const graphCourse: Course = { id: 'course-graph', name: 'Física conectada', emoji: '⚛️', materials: [{ id: 'material-graph', title: 'Cinemática.pdf', sourceType: 'pdf', sourceName: 'cinematica.pdf', createdAt: now, pageCount: 3, analysisStatus: 'ready', analyzedPages: [1, 2, 3], text: 'Movimiento parabólico: la componente horizontal permanece y la velocidad vertical es cero en el vértice.',
+  pages: [{ page: 2, text: 'Movimiento parabólico: la componente horizontal permanece y la velocidad vertical es cero en el vértice.' }],
+  chunks: [{ id: '10000000-0000-4000-8000-000000000001', materialId: 'material-graph', pageStart: 2, pageEnd: 2, text: 'Movimiento parabólico: la componente horizontal permanece y la velocidad vertical es cero en el vértice.', keywords: ['parabólico'] }],
+  topics: [{ id: '20000000-0000-4000-8000-000000000001', materialId: 'material-graph', title: 'Movimiento parabólico', summary: 'Componentes de la velocidad.', pageStart: 2, keywords: ['parabólico'] }],
+  artifacts: [ { id: '30000000-0000-4000-8000-000000000001', sourceMaterialId: 'material-graph', type: 'multiple_choice', status: 'ready', payload: { questions: [question] }, version: 1, createdAt: now, updatedAt: now },
+    { id: '30000000-0000-4000-8000-000000000002', sourceMaterialId: 'material-graph', type: 'flashcards', status: 'ready', payload: { cards: [{ front: '¿Qué ocurre en el vértice?', back: 'La velocidad vertical es cero.', concept: 'Movimiento parabólico', sourcePage: 2 }] }, version: 1, createdAt: now, updatedAt: now } ] }] }

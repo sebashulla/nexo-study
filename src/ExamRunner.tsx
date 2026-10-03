@@ -5,7 +5,8 @@ import { StudyTextarea } from './study/StudyTextarea'
 import type { Course, Material, QuizQuestion, StudyArtifactType } from './types'
 import type { RecallRating } from './lib/learningState'
 import { callAI } from './lib/aiClient'
-import { artifactPage, artifactQuestions } from './lib/artifactPrompts'
+import { artifactQuestions } from './lib/artifactPrompts'
+import { focusedArtifact } from './lib/artifactScope'
 import { ResponseRenderer } from './ResponseRenderer'
 
 type Written = { question: string; keyPoints: string[]; sourcePage?: number; concept?: string }
@@ -20,7 +21,7 @@ function sourcePage(value: unknown) { return typeof value === 'number' && value 
 function normalize(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim().replace(/\s+/g, ' ') }
 
 function latestPayload(material: Material, type: StudyArtifactType) {
-  return material.artifacts?.filter(item => item.type === type && item.status === 'ready' && !artifactPage(item)).sort((a, b) => b.version - a.version)[0]?.payload
+  return material.artifacts?.filter(item => item.type === type && item.status === 'ready' && !focusedArtifact(item)).sort((a, b) => b.version - a.version)[0]?.payload
 }
 
 function examPool(material: Material): ExamItem[] {
@@ -69,12 +70,13 @@ function storedExam(payload: unknown): { count: 10 | 20 | 40; items: ExamItem[] 
   return items.length ? { count: data.count, items } : null
 }
 
-export function ExamRunner({ course, material, onGenerate, onSaveExam, onRecall, onPractice }: {
+export function ExamRunner({ course, material, onGenerate, onSaveExam, onRecall, onPractice, onAsk }: {
   course: Course
   material: Material
   onGenerate: (type: Exclude<StudyArtifactType, 'summary' | 'exam'>, force?: boolean) => void
   onSaveExam: (count: 10 | 20 | 40, items: ExamItem[], force?: boolean) => void
-  onRecall: (concept: string, rating: RecallRating) => void
+  onAsk?: (question: QuizQuestion, selected: number) => void
+  onRecall: (concept: string, rating: RecallRating, source?: 'quiz' | 'written') => void
   onPractice: (type: 'written_questions' | 'fill_blanks' | 'exam', index: number, correct: boolean) => void
 }) {
   const mobile = useMediaQuery('(max-width: 700px)')
@@ -94,7 +96,7 @@ export function ExamRunner({ course, material, onGenerate, onSaveExam, onRecall,
   const reset = () => { setIndex(0); setAnswer(''); setChecked(false); setFeedback(''); setCorrect(0) }
   const next = () => { setIndex(value => value + 1); setAnswer(''); setChecked(false); setFeedback('') }
   const mark = (concept: string, passed: boolean) => {
-    onRecall(concept, passed ? 'good' : 'again')
+    onRecall(concept, passed ? 'good' : 'again', current?.kind === 'written_questions' ? 'written' : 'quiz')
     onPractice('exam', index, passed)
     if (passed) setCorrect(value => value + 1)
     setChecked(true)
@@ -130,7 +132,7 @@ export function ExamRunner({ course, material, onGenerate, onSaveExam, onRecall,
           {current.kind === 'fill_blanks' && <><label>Completa el espacio<input value={answer} disabled={checked} onChange={event => setAnswer(event.target.value)}/></label><button className="primary" disabled={!answer.trim() || checked} onClick={() => mark(current.value.concept || current.value.answer, normalize(answer) === normalize(current.value.answer))}>Comprobar</button></>}
           {current.kind === 'written_questions' && <><label>Tu respuesta<StudyTextarea rows={7} value={answer} onChange={event => setAnswer(event.target.value)} placeholder="Explica y justifica tu respuesta…"/></label><button className="primary" disabled={!answer.trim() || busy || checked} onClick={() => void reviewWritten(current.value)}>{busy ? 'Revisando…' : 'Revisar con Nexo'}</button></>}
           {feedback && <div className="guided-feedback"><ResponseRenderer text={feedback}/></div>}
-          {checked && <div className="guided-feedback">{current.kind === 'multiple_choice' && <><strong>{Number(answer) === current.value.answer ? 'Correcto' : 'Revisa esta idea'}</strong><p>{current.value.explanation}</p></>}{current.kind === 'fill_blanks' && <><strong>{normalize(answer) === normalize(current.value.answer) ? 'Correcto' : 'Revisa esta idea'}</strong><p>Respuesta esperada: {current.value.answer}</p></>}{current.kind === 'written_questions' ? <div><button className="secondary" onClick={() => { mark(current.value.concept || current.value.question, false); next() }}>Necesito repasar</button><button className="primary" onClick={() => { mark(current.value.concept || current.value.question, true); next() }}>Lo comprendí · siguiente</button></div> : <button className="primary" onClick={next}>{index + 1 === items.length ? 'Ver resultado' : 'Siguiente →'}</button>}</div>}
+          {checked && <div className="guided-feedback">{current.kind === 'multiple_choice' && <><strong>{Number(answer) === current.value.answer ? 'Correcto' : 'Revisa esta idea'}</strong><p>{current.value.explanation}</p>{Number(answer) !== current.value.answer && onAsk && <button className="secondary" onClick={() => onAsk(current.value as QuizQuestion, Number(answer))}>Preguntar a Nexo</button>}</>}{current.kind === 'fill_blanks' && <><strong>{normalize(answer) === normalize(current.value.answer) ? 'Correcto' : 'Revisa esta idea'}</strong><p>Respuesta esperada: {current.value.answer}</p></>}{current.kind === 'written_questions' ? <div><button className="secondary" onClick={() => { mark(current.value.concept || current.value.question, false); next() }}>Necesito repasar</button><button className="primary" onClick={() => { mark(current.value.concept || current.value.question, true); next() }}>Lo comprendí · siguiente</button></div> : <button className="primary" onClick={next}>{index + 1 === items.length ? 'Ver resultado' : 'Siguiente →'}</button>}</div>}
         </div>}
   </div>
 }

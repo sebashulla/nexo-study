@@ -1,4 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
+import { academicMock } from './helpers/academicMock'
+import { demoCourses } from '../src/data/demo'
 
 const user = { id: '12345678-1234-4234-8234-123456789012', aud: 'authenticated', role: 'authenticated', email: 'estudiante@example.com', user_metadata: { full_name: 'Estudiante Nexo' }, app_metadata: {}, created_at: '2026-01-01T00:00:00Z' }
 const session = { access_token: 'test-access-token', refresh_token: 'test-refresh-token', token_type: 'bearer', expires_in: 3600, user }
@@ -201,6 +203,8 @@ test('main workspaces fit common desktop widths', async ({ page }) => {
 })
 
 test('course Nexo retrieves relevant material and a study session survives refresh', async ({ page }) => {
+  const mock = await academicMock(page, { identity: user })
+  demoCourses.forEach(course => mock.seedCourse(course))
   let payload: Record<string, unknown> | undefined
   const sessionEvents: string[] = []
   await page.route('**/rest/v1/study_session_events**', route => {
@@ -233,9 +237,11 @@ test('course Nexo retrieves relevant material and a study session survives refre
   await page.locator('.study-session-plan li').nth(2).getByRole('button', { name: 'Abrir' }).click()
   await page.locator('.flashcard').click()
   await page.getByRole('group', { name: '¿Cómo recordaste esta tarjeta?' }).getByRole('button', { name: 'Bien' }).click()
+  await expect.poll(() => [...(mock.rows.get('concept_evidence')?.values() ?? [])].some(row => row.source_type === 'flashcard')).toBe(true)
   await page.goto('/courses/course-bio/practice')
   await page.locator('.study-session-plan li').nth(1).getByRole('button', { name: 'Abrir' }).click()
   await page.locator('.quiz-card .options button').first().click()
+  await expect.poll(() => [...(mock.rows.get('concept_evidence')?.values() ?? [])].some(row => row.source_type === 'quiz')).toBe(true)
   await page.goto('/courses/course-bio/practice')
   await page.locator('.study-session-plan li').first().getByRole('button', { name: 'Marcar hecho' }).click()
   await expect(page.locator('.study-session-plan')).toContainText('1/4 actividades terminadas')

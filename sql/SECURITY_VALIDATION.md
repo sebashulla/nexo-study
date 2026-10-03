@@ -1,11 +1,11 @@
-# V0.9.3 — validación reproducible de privacidad
+# V0.9.6 — validación reproducible de privacidad
 
 **Estado:** preparado, pendiente de ejecutar en Supabase real. Los tests de Playwright simulan el servidor; no validan RLS, SQL ni permisos de Storage.
 
 ## Preparación
 
-1. Usar un proyecto de prueba con migraciones 001–008 ya aplicadas. Aplicar `009_saved_solutions.sql` en SQL Editor; volver a aplicarla para comprobar idempotencia. No editar migraciones históricas.
-2. Confirmar en Storage que `study-pdfs` y `solution-images` tienen **Public desactivado**. Este último admite PNG/JPEG/WebP y hasta 3 MB por archivo.
+1. Usar un proyecto de prueba con migraciones 001–009 ya aplicadas. Aplicar `010_conversations_learning_evidence.sql` en SQL Editor; volver a aplicarla para comprobar idempotencia. No editar migraciones históricas.
+2. Confirmar en Storage que `study-pdfs`, `solution-images` y `conversation-images` tienen **Public desactivado**. Este bucket de imágenes admite PNG/JPEG/WebP y hasta 3 MB por archivo.
 3. Crear dos cuentas confirmadas diferentes, User A y User B. Iniciar sesión en la app en dos perfiles de navegador separados.
 4. Obtener los `access_token` de esas sesiones (DevTools → Application → Local Storage → sesión de Supabase). Son credenciales temporales: no pegarlos en issues, capturas, Git ni logs. Si expiran, iniciar sesión de nuevo.
 5. Ejecutar desde la raíz en PowerShell con Node disponible. Usar exclusivamente la clave `anon`/publishable; **nunca service_role ni una secret key**.
@@ -23,11 +23,11 @@ El script crea recursos temporales con prefijo `security-<uuid>` para cada propi
 
 ## Qué verifica el script
 
-- El propietario puede crear y leer sus cursos, materiales, chunks, artefactos y soluciones.
+- El propietario puede crear y leer sus cursos, materiales, chunks, artefactos, soluciones, threads, messages, concept_evidence y learning_state.
 - El otro usuario no puede leer, insertar con un `user_id` ajeno, actualizar ni eliminar esas filas. UPDATE/DELETE pueden devolver `200 []`: también se comprueba que la fila sigue intacta con la sesión del dueño.
 - Ambos propietarios pueden subir/descargar PDF e imágenes propios y crear signed URLs.
 - El otro usuario no puede descargar objetos, crear signed URLs ni escribir en la ruta ajena; un intento de eliminación no retira el archivo.
-- La URL pública permanente no permite descargar ninguno de los dos tipos de archivo.
+- La URL pública permanente no permite descargar ninguno de los tres buckets.
 - No usa SQL elevado ni claves que eviten RLS. Opcional: repetir con User A marcado admin para comprobar que tampoco tiene excepción sobre contenido académico privado.
 
 Una signed URL válida es una credencial temporal: quien la reciba puede usarla hasta que expire. La comprobación de aislamiento exige que el otro usuario **no pueda emitir** una URL para archivos ajenos; no exige que una URL ya compartida deje de funcionar.
@@ -45,10 +45,27 @@ Una signed URL válida es una credencial temporal: quien la reciba puede usarla 
 
 ## Evidencia que falta registrar
 
-- Proyecto/fecha y éxito de aplicar 009 dos veces.
+- Proyecto/fecha y éxito de aplicar 010 dos veces.
 - Salida completa del script con ambos usuarios; ningún token.
 - Confirmación de privacidad de los buckets, CHECKs y caso admin.
 - Guardado, recarga, deduplicación, borrado y recuperación de subida parcial con red real.
 - Signed URLs a 10 minutos, expiración y renovación al reabrir la solución.
 
 No marcar Security o Private attachments como validación real completa sin esta evidencia.
+
+## Conversations / graph: comprobación V0.9.6
+
+El script actualizado comprueba SELECT/INSERT/UPDATE/DELETE en las cuatro tablas nuevas/reutilizadas, búsqueda de títulos y los RPCs append/record/reset en ambos sentidos. Comprueba que mensajes y estados del dueño permanecen intactos tras UPDATE/DELETE ajenos. Añade subida, descarga, firma y borrado de `conversation-images`. `concept_evidence` no concede UPDATE; recibir denied es el resultado correcto incluso para el dueño.
+
+1. A: crear conversación general, curso y material. Recargar en otro perfil con sesión A: abrir desde historial y verificar fuentes/página. Solo se restaura la conversación seleccionada localmente en ese navegador; en un dispositivo nuevo se elige desde historial.
+2. B: consultar cada UUID de A con REST y `Authorization: Bearer TOKEN-B`. En threads/messages/evidence/state: SELECT devuelve `[]`; UPDATE/DELETE `[]` o denied. Buscar el título exclusivo de A devuelve `[]`. Repetir A→B, también con A admin.
+3. B: llamar append/record con IDs de course/material de A; debe fallar. Reset de curso ajeno debe fallar. Nunca ejecutar estos tests como service_role o desde SQL Editor para afirmar aislamiento de sesiones.
+4. A: fallar quiz, marcar una tarjeta difícil y autoevaluar una respuesta escrita. Revisar evidence `weight` 1/1/0.5. Una pregunta útil tiene peso 0 y no suma intentos ni dominio. Intentar cambiar peso desde el cliente: normalización SQL impone el valor.
+5. A: borrar señal → recalcular; borrar conversación → borrar señales de chat, conservar quiz/flashcards. Reiniciar curso → evidence vacío, learning_state desconocido con 0 intentos, sin 0% de dominio en UI. Materiales, actividad y chats permanecen.
+6. Offline: enviar con imagen, recargar, recuperar red y reintentar. IDs no duplicados, `attachmentsReady` solo después de Storage. Probar también fallo parcial de upload y DELETE Storage; la UI conserva error y permite reintento.
+7. Dos pestañas: enviar simultáneamente en mismo thread. Deben conservarse ambos mensajes. Al recuperar foco se recargan últimas 40 filas. No se incorpora Supabase Realtime; un segundo dispositivo obtiene nuevos mensajes al volver/abrir/refrescar.
+8. Crear un curso/chat en un espacio y eliminar el espacio (los cursos regresan a General). La conversación y sus mensajes deben permanecer y admitir mensajes nuevos. Los chats generales del espacio conservados pasan al historial General, con workspace_id NULL. No se borran adjuntos por esa operación.
+
+**Estado de este entorno: ⚠️ PARTIAL para Supabase live.** Se ejecuta SQL local con PostgreSQL y se prueban permisos simulados del navegador, pero faltan URL/clave pública y dos sesiones ordinarias de un proyecto de prueba para la validación HTTP. No afirmar “RLS validado” contra producción.
+
+La FK de course elimina filas pero no objetos Storage. El borrado explícito de conversación elimina sus imágenes primero. Una eliminación externa de curso requiere limpiar antes sus prefijos privados; no se implementa garbage collector remoto.
