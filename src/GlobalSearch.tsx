@@ -6,6 +6,7 @@ import { displayMaterialTitle } from './lib/materialTitles'
 import { getThread, searchThreads } from './lib/conversationRepository'
 import type { ConversationThread } from './lib/conversationTypes'
 import { Dialog } from './Dialog'
+import { sourceLabels, sourceReference } from './lib/sourceModel'
 
 type Hit = { id: string; group: string; title: string; detail: string; courseId?: string; materialId?: string; page?: number; type?: StudyArtifactType; concept?: string; workspaceId?: string; conversation?: ConversationThread }
 type TopicHit = { courseId: string; materialId: string; title: string; page: number }
@@ -16,11 +17,12 @@ function savedHits(userId: string): Hit[] {
   try { const value: unknown = JSON.parse(localStorage.getItem(historyKey(userId)) ?? '[]'); return Array.isArray(value) ? value.filter((item): item is Hit => item && typeof item.id === 'string' && typeof item.title === 'string' && typeof item.group === 'string' && typeof item.detail === 'string').slice(0, 8) : [] } catch { return [] }
 }
 
-export function GlobalSearch({ userId, workspaceId, courses, onClose, onCourse, onMaterial, onSolution, onArtifact, onConversation, onUpload, onResolver }: {
+export function GlobalSearch({ userId, workspaceId, courses, onClose, onCourse, onMaterial, onSolution, onArtifact, onConversation, onUpload, onResolver, onCreateCourse, onNewNote }: {
   userId: string; workspaceId: string; courses: Course[]; onClose: () => void; onCourse: (id: string) => void
   onMaterial: (courseId: string, materialId: string, page?: number) => void; onSolution: (id: string, courseId: string) => void
   onArtifact: (courseId: string, materialId: string, id: string, type: StudyArtifactType, page?: number, concept?: string) => void
   onConversation: (thread: ConversationThread) => void; onUpload: () => void; onResolver: () => void
+  onCreateCourse: () => void; onNewNote: () => void
 }) {
   const [query, setQuery] = useState('')
   const [remoteTopics, setRemoteTopics] = useState<TopicHit[]>([])
@@ -78,16 +80,20 @@ export function GlobalSearch({ userId, workspaceId, courses, onClose, onCourse, 
   else {
     hits.push(...courses.filter(course => normalized(course.name).includes(term)).slice(0, 6).map(course => ({ id: course.id, group: 'Cursos', title: `${course.emoji} ${course.name}`, detail: `${course.materials.length} materiales`, courseId: course.id })))
     for (const course of courses) for (const material of course.materials) {
-      if (normalized(`${material.title} ${material.sourceName ?? ''}`).includes(term)) hits.push({ id: material.id, group: 'Materiales', title: displayMaterialTitle(material.title), detail: course.name, courseId: course.id, materialId: material.id })
-      for (const topic of material.topics ?? []) if (normalized(topic.title).includes(term)) hits.push({ id: `topic:${material.id}:${topic.pageStart}:${topic.title}`, group: 'Temas', title: topic.title, detail: `${course.name} · pág. ${topic.pageStart ?? 1}`, courseId: course.id, materialId: material.id, page: topic.pageStart ?? 1 })
+      if (!material.archivedAt && !material.deletionPending && normalized(`${material.title} ${material.sourceName ?? ''} ${course.name} ${sourceLabels[material.sourceType ?? 'text']}`).includes(term)) hits.push({ id: material.id, group: 'Materiales', title: displayMaterialTitle(material.title), detail: course.name, courseId: course.id, materialId: material.id })
+      for (const topic of material.topics ?? []) if (normalized(topic.title).includes(term)) hits.push({ id: `topic:${material.id}:${topic.pageStart}:${topic.title}`, group: 'Temas', title: topic.title, detail: `${course.name} · ${sourceReference(material,topic.pageStart ?? 1)}`, courseId: course.id, materialId: material.id, page: topic.pageStart ?? 1 })
       for (const artifact of material.artifacts ?? []) if (artifact.status === 'ready' && (types.includes(artifact.type) || materialIds.includes(material.id))) hits.push({ id: artifact.id, group: 'Recursos', title: labels[artifact.type], detail: material.title, courseId: course.id, materialId: material.id, type: artifact.type, page: artifactPage(artifact) })
     }
-    for (const topic of remoteTopics) if (courses.some(course => course.id === topic.courseId && course.materials.some(material => material.id === topic.materialId))) hits.push({ id: `topic:${topic.materialId}:${topic.page}:${topic.title}`, group: 'Temas', detail: `pág. ${topic.page}`, ...topic })
+    for (const topic of remoteTopics) {
+      const course = courses.find(course => course.id === topic.courseId)
+      const material = course?.materials.find(material => material.id === topic.materialId)
+      if (course && material) hits.push({ id: `topic:${topic.materialId}:${topic.page}:${topic.title}`, group: 'Temas', detail: `${course.name} · ${sourceReference(material,topic.page)}`, ...topic })
+    }
     hits.push(...solutions.filter(solution => courses.some(course => course.id === solution.courseId)).map(solution => ({ id: solution.id, group: 'Soluciones', title: solution.question, detail: courses.find(course => course.id === solution.courseId)!.name, courseId: solution.courseId })))
     for (const artifact of artifacts) {
       const course = courses.find(course => course.id === artifact.courseId)
       const material = course?.materials.find(material => material.id === artifact.materialId)
-      if (course && material) hits.push({ ...artifact, group: 'Recursos', title: labels[artifact.type], detail: `${material.title}${artifact.page ? ` · pág. ${artifact.page}` : ''}` })
+      if (course && material) hits.push({ ...artifact, group: 'Recursos', title: labels[artifact.type], detail: `${material.title}${artifact.page ? ` · ${sourceReference(material,artifact.page)}` : ''}` })
     }
     hits.push(...conversations.filter(thread => normalized(thread.title).includes(term)).slice(0, 6).map(thread => ({ id: thread.id, group: 'Conversaciones', title: thread.title, detail: thread.scope === 'general' ? 'Resolver · espacio actual' : `${courses.find(course => course.id === thread.courseId)?.name ?? 'Curso'}${thread.materialId ? ' · material' : ''}`, workspaceId: thread.workspaceId, conversation: thread })))
   }
@@ -114,7 +120,7 @@ export function GlobalSearch({ userId, workspaceId, courses, onClose, onCourse, 
           <button id={`${resultId}-${index}`} role="option" aria-selected={active === index} onMouseMove={() => setSelected(index)} onClick={() => open(hit)}><span>{!term ? `${hit.group} · ` : ''}{hit.detail}</span><strong>{hit.title}</strong></button>
         </Fragment>)}
       </div>
-      {!term && <div className="search-quick-actions"><p className="eyebrow">Acciones rápidas</p><button className="text-button" onClick={onUpload}>＋ Subir material</button><button className="text-button" onClick={onResolver}>✦ Resolver</button></div>}
+      {!term && <div className="search-quick-actions"><p className="eyebrow">Acciones rápidas</p><button className="text-button" onClick={onUpload}>＋ Agregar material</button><button className="text-button" onClick={onCreateCourse}>＋ Crear curso</button><button className="text-button" onClick={onNewNote}>＋ Nuevo apunte</button><button className="text-button" onClick={onResolver}>✦ Resolver</button></div>}
       {searching && <p role="status">Buscando…</p>}{searchError && <p role="status">{searchError}</p>}
       {term && !searching && !results.length && <div className="search-empty"><strong>No encontramos coincidencias</strong><p>Prueba con otro tema, material o nombre de curso.</p></div>}
       <p className="search-keyboard-hint"><kbd>↑ ↓</kbd> elegir · <kbd>Enter</kbd> abrir · <kbd>Escape</kbd> cerrar</p>

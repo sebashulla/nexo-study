@@ -1,3 +1,4 @@
+import { studyFixtureCourses } from './helpers/studyFixtures'
 import { test, expect, type Page } from '@playwright/test'
 import { selectStudyMode, openWorkspaceNavigation } from './helpers/navigation'
 
@@ -50,6 +51,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 async function login(page: Page) {
+  await page.addInitScript(({id,data}) => { const key=`nexo-study-courses-v5:${id}`; if(!localStorage.getItem(key)) localStorage.setItem(key,JSON.stringify(data)) },{id:user.id,data:studyFixtureCourses})
   await page.goto('/')
   await page.getByLabel('Correo electrónico', { exact: true }).fill(user.email)
   await page.getByLabel('Contraseña', { exact: true }).fill('UnaClave123!')

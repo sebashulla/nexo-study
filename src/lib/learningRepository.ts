@@ -3,6 +3,7 @@ import type { StudyActivity } from './studyProgress'
 import type { LearningMemory } from './learningState'
 import { supabase } from './supabase'
 import { mapConcept } from './learningGraphRepository'
+import { sourceReference } from './sourceModel'
 
 export async function searchStudyArtifacts(userId: string, types: StudyArtifactType[], materialIds: string[]) {
   if (!supabase || (!types.length && !materialIds.length)) return []
@@ -15,15 +16,15 @@ export async function searchStudyArtifacts(userId: string, types: StudyArtifactT
     type: row.type as StudyArtifactType, concept: row.scope && typeof row.scope === 'object' && !Array.isArray(row.scope) && row.scope.kind === 'concept' && typeof row.scope.label === 'string' ? row.scope.label : undefined, page: row.scope && typeof row.scope === 'object' && !Array.isArray(row.scope) && typeof row.scope.page === 'number' ? row.scope.page : undefined }))
 }
 
-export async function renameMaterial(userId: string, courseId: string, materialId: string, title: string) {
+export async function renameMaterial(userId: string, courseId: string, materialId: string, title: string, expectedRevision: number) {
   if (!supabase) throw new Error('Nexo no está conectado con tu cuenta.')
-  const { data, error } = await supabase.from('materials').update({ title }).eq('user_id', userId).eq('course_id', courseId).eq('id', materialId).select('id').single()
-  if (error || !data) throw error ?? new Error('No pudimos encontrar este material.')
+  const { error } = await supabase.rpc('rename_source_material', { p_course_id: courseId, p_material_id: materialId, p_title: title, p_expected_revision: expectedRevision })
+  if (error) throw error
 }
 
 type CourseRow = { id: string; name: string; emoji: string }
 type MaterialRow = {
-  id: string; course_id: string; title: string; content?: string; source_type: 'text' | 'pdf';
+  id: string; course_id: string; title: string; content?: string; source_type: Material['sourceType'];
   source_name: string | null; pages?: unknown; page_count: number | null; storage_path: string | null;
   metadata: unknown; document_kind: Material['documentKind']; analysis_status: Material['analysisStatus']; analyzed_pages: number[] | null;
   processing_status: Material['processingStatus']; study_pack?: Material['studyPack'] | null;
@@ -40,6 +41,11 @@ function mapMaterial(row: MaterialRow): Material {
   return {
     id: row.id, title: row.title, text: row.content ?? '', createdAt: row.created_at,
     sourceType: row.source_type, sourceName: row.source_name ?? undefined,
+    sourceMetadata: metadata.source as Material['sourceMetadata'],
+    processingError: typeof metadata.processingError === 'string' ? metadata.processingError : undefined,
+    archivedAt: typeof metadata.archivedAt === 'string' ? metadata.archivedAt : undefined,
+    deletionPending: metadata.deletionPending === true,
+    sourceRevision: typeof metadata.sourceRevision === 'number' ? metadata.sourceRevision : undefined,
     pages: validPages(row.pages), pageCount: row.page_count ?? undefined,
     pdfBytes: typeof metadata.byteSize === 'number' ? metadata.byteSize : undefined,
     pdfTitle: typeof metadata.title === 'string' ? metadata.title : undefined,
@@ -61,9 +67,17 @@ export async function synchronizeCourses(userId: string, local: Course[]): Promi
   if (error) throw error
   const rows = (courseResult.data ?? []) as CourseRow[]
   const materialRows = (materialResult.data ?? []) as MaterialRow[]
+  // Completed cleanup rows are durable tombstones: an older browser cache cannot
+  // recreate a deleted material/course during legacy synchronization.
+  const cleanup = await supabase.from('academic_cleanup_jobs').select('course_id,material_id,status').eq('user_id',userId)
+  const jobs = cleanup.data ?? [] // 011 can be absent while legacy 010 remains usable.
+  local = local.filter(course => !jobs.some(job => job.course_id === course.id && !job.material_id)).map(course => ({ ...course,
+    materials: course.materials.filter(material => !jobs.some(job => job.material_id === material.id)) }))
   const remote: Course[] = rows.map(row => ({
     id: row.id, name: row.name, emoji: row.emoji,
-    materials: materialRows.filter(material => material.course_id === row.id).map(material => ({ ...mapMaterial(material), remotePlaceholder: true })),
+    deletionPending: jobs.some(job => job.course_id === row.id && !job.material_id && job.status !== 'complete'),
+    materials: materialRows.filter(material => material.course_id === row.id).map(material => ({ ...mapMaterial(material), remotePlaceholder: true,
+      deletionPending: jobs.some(job => job.course_id === row.id && (job.material_id === material.id || !job.material_id) && job.status !== 'complete') })),
   }))
   const localById = new Map(local.map(course => [course.id, course]))
   const missing: Course[] = []
@@ -184,10 +198,10 @@ export async function searchRemoteContext(course: Course, question: string, mate
     }) : []
   const sources = rows.map(row => ({ materialId: String(row.material_id),
     materialTitle: course.materials.find(material => material.id === row.material_id)?.title ?? 'Material',
-    pageStart: Number(row.page_start), pageEnd: Number(row.page_end) }))
+    pageStart: Number(row.page_start), pageEnd: Number(row.page_end), referenceLabel: sourceReference(course.materials.find(material => material.id === row.material_id),Number(row.page_start),Number(row.page_end)) }))
   const context = rows.map((row, index) => {
     const source = sources[index]
-    const pages = source.pageStart === source.pageEnd ? `página ${source.pageStart}` : `páginas ${source.pageStart}–${source.pageEnd}`
+    const pages = source.referenceLabel
     return `[${source.materialTitle} · ${pages}]\n${String(row.content)}`
   }).join('\n\n')
   return { context: context.slice(0, 13500), sources }
@@ -206,18 +220,21 @@ export async function searchAcademicTopics(userId: string, query: string) {
 }
 
 export async function saveCourses(userId: string, courses: Course[]) {
+  courses = courses.filter(course => !course.deletionPending)
   if (!supabase || !courses.length) return
   const courseRows = courses.map(course => ({ user_id: userId, id: course.id, name: course.name, emoji: course.emoji }))
   const courseResult = await supabase.from('courses').upsert(courseRows, { onConflict: 'user_id,id' })
   if (courseResult.error) throw courseResult.error
-  const materials = courses.flatMap(course => course.materials.filter(material => !material.remotePlaceholder).map(material => ({ course, material })))
+  const materials = courses.flatMap(course => course.materials.filter(material => !material.remotePlaceholder && !material.deletionPending).map(material => ({ course, material })))
   if (!materials.length) return
   const materialRows = materials.map(({ course, material }) => ({
     user_id: userId, course_id: course.id, id: material.id, title: material.title,
     content: material.sourceType === 'pdf' ? '' : material.text,
     source_type: material.sourceType ?? 'text', source_name: material.sourceName ?? null,
     pages: material.sourceType === 'pdf' ? [] : material.pages ?? [], page_count: material.pageCount ?? material.pages?.length ?? null,
-    metadata: material.sourceType === 'pdf' ? { byteSize: material.pdfBytes ?? null, title: material.pdfTitle ?? null, author: material.pdfAuthor ?? null } : {},
+    metadata: { ...(material.sourceType === 'pdf' ? { byteSize: material.pdfBytes ?? null, title: material.pdfTitle ?? null, author: material.pdfAuthor ?? null } : {}),
+      source: material.sourceMetadata ?? {}, processingError: material.processingError ?? null,
+      archivedAt: material.archivedAt ?? null, deletionPending: material.deletionPending ?? false, sourceRevision: material.sourceRevision ?? 0 },
     document_kind: material.documentKind ?? (material.sourceType === 'pdf' ? 'unknown' : 'text'),
     analysis_status: material.analysisStatus ?? (material.processingStatus === 'ready' ? 'ready' : 'not_started'),
     analyzed_pages: material.analyzedPages ?? [],

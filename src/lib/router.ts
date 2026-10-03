@@ -1,4 +1,4 @@
-export type AppTab = 'inicio' | 'cursos' | 'resolver' | 'corrector' | 'progreso'
+export type AppTab = 'inicio' | 'cursos' | 'biblioteca' | 'resolver' | 'corrector' | 'progreso'
 export type CourseSection = 'overview' | 'materials' | 'ai' | 'library' | 'practice' | 'progress'
 export type MaterialStudyMode = 'learn' | 'flashcards' | 'multiple-choice' | 'written' | 'fill-blanks' | 'notes' | 'exam'
 
@@ -39,6 +39,7 @@ export function parseAppRoute(pathname: string): AppRoute {
     catch { return { tab: 'cursos' } }
   }
   if (path === '/courses') return { tab: 'cursos' }
+  if (path === '/library') return { tab: 'biblioteca' }
   if (path === '/folders') return { tab: 'cursos' }
   if (path === '/resolver') return { tab: 'resolver' }
   if (path === '/corrector') return { tab: 'corrector' }
@@ -51,6 +52,7 @@ export function tabPath(tab: AppTab) {
   return ({
     inicio: '/',
     cursos: '/courses',
+    biblioteca: '/library',
     resolver: '/resolver',
     corrector: '/corrector',
     progreso: '/progress',

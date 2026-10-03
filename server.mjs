@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { callNexoEngine, isAIConfigured } from './server/aiEngine.mjs'
 import { verifySupabaseUser } from './server/authGuard.mjs'
+import { processRemoteSource } from './server/sourceExtraction.mjs'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT || 4173)
@@ -65,6 +66,12 @@ const server = http.createServer(async (req, res) => {
       await verifySupabaseUser(req)
       const payload = await readJson(req)
       return json(res, 200, await callNexoEngine(payload))
+    }
+    if (req.method === 'POST' && req.url === '/api/sources/process') {
+      await verifySupabaseUser(req)
+      const payload = await readJson(req)
+      if (Buffer.byteLength(JSON.stringify(payload)) > 12000) return json(res,413,{ error: 'La solicitud supera el límite permitido.' })
+      return json(res,200,await processRemoteSource(payload))
     }
     return json(res, 404, { error: 'No encontrado.' })
   } catch (error) {

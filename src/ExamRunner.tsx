@@ -8,6 +8,7 @@ import { callAI } from './lib/aiClient'
 import { artifactQuestions } from './lib/artifactPrompts'
 import { focusedArtifact } from './lib/artifactScope'
 import { ResponseRenderer } from './ResponseRenderer'
+import { sourceReference } from './lib/sourceModel'
 
 type Written = { question: string; keyPoints: string[]; sourcePage?: number; concept?: string }
 type Blank = { sentence: string; answer: string; sourcePage?: number; concept?: string }
@@ -70,7 +71,8 @@ function storedExam(payload: unknown): { count: 10 | 20 | 40; items: ExamItem[] 
   return items.length ? { count: data.count, items } : null
 }
 
-export function ExamRunner({ course, material, onGenerate, onSaveExam, onRecall, onPractice, onAsk }: {
+export function ExamRunner({ course, material, onGenerate, onSaveExam, onRecall, onPractice, onAsk, onSource }: {
+  onSource: (unit: number) => void
   course: Course
   material: Material
   onGenerate: (type: Exclude<StudyArtifactType, 'summary' | 'exam'>, force?: boolean) => void
@@ -107,7 +109,7 @@ export function ExamRunner({ course, material, onGenerate, onSaveExam, onRecall,
     try {
       const result = await callAI({ task: 'solve', category: course.name, courseId: course.id, materialId: material.id,
         question: `Pregunta de simulacro: ${value.question}\nRespuesta del estudiante: ${answer.trim()}\nIndica qué ideas cubre y cuáles faltan. No inventes una calificación.`,
-        context: `Material ${material.title}, página ${value.sourcePage ?? 'sin referencia'}. Puntos de referencia: ${value.keyPoints.join('; ')}` })
+        context: `Material ${material.title}, ${value.sourcePage ? sourceReference(material,value.sourcePage) : 'sin referencia'}. Puntos de referencia: ${value.keyPoints.join('; ')}` })
       setFeedback(result)
       setChecked(true)
     } catch { setFeedback('Nexo no pudo revisar esta respuesta. Puedes intentarlo de nuevo. Cuidamos tu texto.'); setChecked(false) }
@@ -126,8 +128,9 @@ export function ExamRunner({ course, material, onGenerate, onSaveExam, onRecall,
     {saved && <button className="secondary" onClick={() => { onSaveExam(count, available, true); reset() }} disabled={!available.length}>Regenerar simulacro</button>}</details>
     {!items.length ? <div className="artifact-gate"><h3>Prepara preguntas para el simulacro</h3><p>{available.length ? `${available.length} preguntas disponibles. El simulacro quedará guardado para reutilizarlo.` : 'Nexo creará ejercicios bajo demanda y los conservará en tu biblioteca.'}</p>{available.length > 0 && <button className="primary" onClick={() => { onSaveExam(count, available); reset() }}>Preparar simulacro</button>}</div>
       : index >= items.length ? <div className="guided-lesson"><h3>Simulacro terminado</h3><p>{correct} de {items.length} respuestas marcadas como comprendidas o correctas.</p><p>Las respuestas abiertas se valoran según tu autoevaluación después de la orientación de Nexo.</p><button className="primary" onClick={reset}>Repetir simulacro</button></div>
-        : <div className="guided-lesson"><p className="counter">Pregunta {index + 1} de {items.length}{items.length < count ? ` · ${items.length} disponibles` : ''}{current.value.sourcePage ? ` · Página ${current.value.sourcePage}` : ''}</p>
+        : <div className="guided-lesson"><p className="counter">Pregunta {index + 1} de {items.length}{items.length < count ? ` · ${items.length} disponibles` : ''}{current.value.sourcePage ? ` · ${sourceReference(material,current.value.sourcePage)}` : ''}</p>
           <h3>{current.kind === 'fill_blanks' ? current.value.sentence : current.value.question}</h3>
+          {current.value.sourcePage && <button className="text-button" onClick={() => onSource(current.value.sourcePage!)}>Ver {sourceReference(material,current.value.sourcePage)}</button>}
           {current.kind === 'multiple_choice' && <div className="exam-options">{current.value.options.map((option, optionIndex) => <button key={optionIndex} disabled={checked} onClick={() => { setAnswer(String(optionIndex)); mark(current.value.concept || current.value.question, optionIndex === current.value.answer) }}>{option}</button>)}</div>}
           {current.kind === 'fill_blanks' && <><label>Completa el espacio<input value={answer} disabled={checked} onChange={event => setAnswer(event.target.value)}/></label><button className="primary" disabled={!answer.trim() || checked} onClick={() => mark(current.value.concept || current.value.answer, normalize(answer) === normalize(current.value.answer))}>Comprobar</button></>}
           {current.kind === 'written_questions' && <><label>Tu respuesta<StudyTextarea rows={7} value={answer} onChange={event => setAnswer(event.target.value)} placeholder="Explica y justifica tu respuesta…"/></label><button className="primary" disabled={!answer.trim() || busy || checked} onClick={() => void reviewWritten(current.value)}>{busy ? 'Revisando…' : 'Revisar con Nexo'}</button></>}

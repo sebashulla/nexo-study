@@ -1,3 +1,4 @@
+import { academicMock } from './helpers/academicMock'
 import { openWorkspaceNavigation } from './helpers/navigation'
 import { test, expect, type Page } from '@playwright/test'
 
@@ -70,7 +71,7 @@ test('mobile drawer keeps navigation in full-width rows with readable labels', a
       const drawer = page.getByRole('dialog', { name: 'Barra lateral principal' })
       await expect(drawer.getByRole('button', { name: 'Ir al inicio' })).toBeVisible()
       const buttons = drawer.getByRole('navigation', { name: 'Navegación principal' }).getByRole('button')
-      await expect(buttons).toHaveCount(5)
+      await expect(buttons).toHaveCount(6)
       let previousBottom = 0
       for (const button of await buttons.all()) {
         const box = (await button.boundingBox())!
@@ -200,6 +201,8 @@ test('bad URLs and malformed saved courses recover without a blank page', async 
 })
 
 test('create a course and material, study it, and use accessible scrollable dialogs', async ({ page }, info) => {
+  await academicMock(page,{identity:user})
+  await page.route('**/api/ai/solve',route => route.fulfill({json:{text:JSON.stringify({cards:Array.from({length:4},() => ({front:'¿Qué contiene el núcleo?',back:'El núcleo contiene ADN.',sourcePage:1}))})}}))
   await login(page)
   await page.goto('/courses')
   await page.getByRole('button', { name: /Nuevo curso/ }).first().click()
@@ -209,9 +212,9 @@ test('create a course and material, study it, and use accessible scrollable dial
   await expect(dialog).not.toBeVisible()
   await page.getByRole('button', { name: /Agregar material/ }).first().click()
   dialog = page.getByRole('dialog')
-  await dialog.getByRole('button', { name: 'Escribir apuntes sin archivo' }).click()
-  await dialog.getByLabel('Título para mostrar').fill('Estructura y funciones de la célula')
-  await dialog.getByRole('textbox', { name: 'Apuntes' }).fill('La célula es la unidad básica de los seres vivos. La membrana celular regula el paso de sustancias. El núcleo contiene el ADN y dirige la actividad celular. Las mitocondrias producen energía mediante respiración celular. Los ribosomas sintetizan proteínas. El citoplasma contiene los orgánulos celulares.')
+  await dialog.getByRole('button', { name:/^Apuntes/ }).click()
+  await dialog.getByLabel('Título').fill('Estructura y funciones de la célula')
+  await dialog.getByRole('textbox', { name:'Tus apuntes' }).fill('La célula es la unidad básica de los seres vivos. La membrana celular regula el paso de sustancias. El núcleo contiene el ADN y dirige la actividad celular. Las mitocondrias producen energía mediante respiración celular. Los ribosomas sintetizan proteínas. El citoplasma contiene los orgánulos celulares.')
   await dialog.getByRole('button', { name: 'Guardar y abrir material' }).click()
   await expect(page.getByRole('heading', { name: 'Estructura y funciones de la célula' }).first()).toBeVisible()
   await noOverflow(page)
@@ -219,11 +222,12 @@ test('create a course and material, study it, and use accessible scrollable dial
   const practice = page.locator('.material-method-group').filter({ has: page.locator('summary', { hasText: 'Practicar' }) })
   if (!(await practice.getAttribute('open') === '')) await practice.locator('summary').click()
   await page.locator('.material-methods button').filter({ hasText: 'Flashcards' }).click()
+  await page.getByRole('button',{name:'Generar flashcards con Nexo'}).click()
   await expect(page.locator('.flashcard')).toBeVisible()
   await page.locator('.flashcard').click()
   await expect(page.locator('.flashcard')).toContainText('RESPUESTA')
   await page.screenshot({ path: info.outputPath('flashcard.png'), fullPage: true })
-  if (page.viewportSize()!.width <= 700) await page.getByRole('button', { name: 'Volver al material o curso' }).click()
+  if (await page.locator('.study-focus-shell').count()) await page.getByRole('button', { name: 'Volver al material o curso' }).click()
   await page.getByRole('button', { name: 'Mi cuenta' }).click()
   await page.getByRole('menuitem', { name: 'Enviar comentarios' }).click()
   dialog = page.getByRole('dialog')

@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 
 export async function navigateSection(page: Page, name: string) {
   if (await page.locator('.study-focus-shell').count()) await page.getByRole('button', { name: 'Volver al material o curso' }).click()
@@ -23,4 +23,11 @@ export async function openGlobalSearch(page: Page) {
     await page.getByRole('button', { name: 'Abrir navegación' }).click()
     await page.getByRole('button', { name: '⌕ Buscar en Nexo', exact: true }).click()
   } else await page.getByRole('button', { name: 'Buscar en Nexo Study', exact: true }).click()
+}
+
+export async function selectLibraryFilter(page: Page, name: string) {
+  await expect(page.locator('.library-v2')).toBeVisible()
+  const button=page.getByRole('group',{name:'Filtrar biblioteca'}).getByRole('button',{name,exact:true})
+  if (!await button.isVisible()) await page.getByRole('button',{name:/^Filtros/}).click()
+  await button.click()
 }

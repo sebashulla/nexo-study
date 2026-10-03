@@ -1,4 +1,4 @@
-// Run against a disposable Supabase project after migrations 001–010.
+// Run against a disposable Supabase project after migrations 001–011.
 // Uses ordinary user sessions. No service role and no existing content is deleted.
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
@@ -31,10 +31,10 @@ const run = randomUUID()
 const fixtures = ids.map(userId => {
   const courseId = `security-${run}-${userId}`
   const materialId = `material-${run}-${userId}`
-  const solutionId = randomUUID()
+  const solutionId = randomUUID(), sourceId=`${materialId}-source`
   const threadId = randomUUID(), messageId = randomUUID()
   const conversationImage = `${userId}/${threadId}/${messageId}/0.png`
-  return { userId, courseId, materialId, solutionId, threadId, messageId, conversationImage, uploadMaterialId: `${materialId}-upload-target`,
+  return { userId, courseId, materialId, solutionId, sourceId,sourceText:`${userId}/${courseId}/${sourceId}/original.txt`, threadId, messageId, conversationImage, uploadMaterialId: `${materialId}-upload-target`,
     pdf: `${userId}/${courseId}/${materialId}/original.pdf`,
     image: `${userId}/${courseId}/solutions/${solutionId}/fixture.png`,
     rows: {
@@ -49,7 +49,7 @@ const fixtures = ids.map(userId => {
       saved_solutions: { id: solutionId, user_id: userId, course_id: courseId, question: 'Private question', answer: 'Private answer', source_key: run, status: 'ready' },
     } }
 })
-const fixtureFiles = [{ bucket: 'conversation-images', field: 'conversationImage', mime:'image/png', bytes:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB3sAAAAASUVORK5CYII=', 'base64') }, { bucket: 'study-pdfs', field: 'pdf', mime: 'application/pdf', bytes: Buffer.from('%PDF-1.4\n%%EOF') },
+const fixtureFiles = [{bucket:'study-sources',field:'sourceText',mime:'text/plain',bytes:Buffer.from('La componente horizontal permanece constante en ausencia de fuerza horizontal.')}, { bucket: 'conversation-images', field: 'conversationImage', mime:'image/png', bytes:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB3sAAAAASUVORK5CYII=', 'base64') }, { bucket: 'study-pdfs', field: 'pdf', mime: 'application/pdf', bytes: Buffer.from('%PDF-1.4\n%%EOF') },
   { bucket: 'solution-images', field: 'image', mime: 'image/png', bytes: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aB3sAAAAASUVORK5CYII=', 'base64') }]
 const objectPath = (bucket, path) => `${bucket}/${path.split('/').map(encodeURIComponent).join('/')}`
 let passed = false
@@ -62,10 +62,14 @@ try {
     }
     const uploadTarget = await request(tokens[index], '/rest/v1/materials', 'POST', { ...fixture.rows.materials, id: fixture.uploadMaterialId })
     assert(uploadTarget.ok, 'Owner must create the empty PDF upload target.')
+    const source=await request(tokens[index],'/rest/v1/materials','POST',{user_id:fixture.userId,course_id:fixture.courseId,id:fixture.sourceId,title:'Private source',source_type:'text',metadata:{sourceRevision:1}})
+    assert(source.ok,'Owner must create a universal source before private upload.')
     for (const file of fixtureFiles) {
       const uploaded = await request(tokens[index], `/storage/v1/object/${objectPath(file.bucket, fixture[file.field])}`, 'POST', file.bytes, file.mime)
       assert(uploaded.ok, `Owner upload failed: ${file.bucket}, HTTP ${uploaded.status}`)
     }
+    const committed=await request(tokens[index],'/rest/v1/rpc/commit_source_document','POST',{p_course_id:fixture.courseId,p_material_id:fixture.sourceId,p_expected_revision:1,p_document:{title:'Private normalized source',text:'La componente horizontal permanece constante.',pages:[{page:1,heading:'Movimiento',text:'La componente horizontal permanece constante.'}],metadata:{sourceRevision:2,source:{units:[{page:1,heading:'Movimiento'}]}},analysis_status:'ready',chunks:[{id:randomUUID(),pageStart:1,pageEnd:1,text:'La componente horizontal permanece constante.',keywords:['horizontal']}],topics:[],summary:{summary:'Movimiento horizontal constante.'}}})
+    assert(committed.ok,'Owner normalized document commit must succeed.')
   }
   // Test both directions, including an admin user if desired (admin has no private-content exception).
   for (const actor of [0, 1]) {
@@ -98,6 +102,7 @@ try {
     const reset = await request(tokens[actor], '/rest/v1/rpc/reset_course_learning_memory','POST',{p_course_id:other.courseId})
     assert(!reset.ok, 'Reset RPC erased foreign memory.')
     console.log(`PASS ${actor === 0 ? 'A → B' : 'B → A'} conversation title search and graph RPC ownership`)
+    for(const [rpc,args] of [['commit_source_document',{p_course_id:other.courseId,p_material_id:other.sourceId,p_expected_revision:2,p_document:{}}],['rename_source_material',{p_course_id:other.courseId,p_material_id:other.sourceId,p_expected_revision:2,p_title:'Forged'}],['begin_academic_cleanup',{p_course_id:other.courseId,p_material_id:other.sourceId}]]) assert(!(await request(tokens[actor],`/rest/v1/rpc/${rpc}`,'POST',args)).ok,`Foreign ${rpc} must be denied.`)
     for (const file of fixtureFiles) {
       const object = objectPath(file.bucket, other[file.field])
       const ownDownload = await request(tokens[1 - actor], `/storage/v1/object/authenticated/${object}`)
@@ -114,7 +119,7 @@ try {
       assert(signed.ok, `Owner signed URL cannot download ${file.bucket}.`)
       const publicDownload = await fetch(`${base}/storage/v1/object/public/${object}`)
       assert(!publicDownload.ok, `${file.bucket} is publicly downloadable.`)
-      const foreignTarget = file.bucket === 'study-pdfs' ? `${other.userId}/${other.courseId}/${other.uploadMaterialId}/original.pdf` : file.bucket === 'conversation-images' ? `${other.userId}/${other.threadId}/${other.messageId}/1.png` : `${other.userId}/${other.courseId}/solutions/${other.solutionId}/forged.png`
+      const foreignTarget = file.bucket === 'study-sources' ? `${other.userId}/${other.courseId}/${other.sourceId}/forged.txt` : file.bucket === 'study-pdfs' ? `${other.userId}/${other.courseId}/${other.uploadMaterialId}/original.pdf` : file.bucket === 'conversation-images' ? `${other.userId}/${other.threadId}/${other.messageId}/1.png` : `${other.userId}/${other.courseId}/solutions/${other.solutionId}/forged.png`
       const forged = await request(tokens[actor], `/storage/v1/object/${objectPath(file.bucket, foreignTarget)}`, 'POST', file.bytes, file.mime)
       assert(!forged.ok, `Foreign ${file.bucket} upload succeeded.`)
       await request(tokens[actor], `/storage/v1/object/${file.bucket}`, 'DELETE', { prefixes: [other[file.field]] })
@@ -122,13 +127,30 @@ try {
       console.log(`PASS ${actor === 0 ? 'A → B' : 'B → A'} ${file.bucket}: private download/sign/upload/delete`)
     }
   }
+  for (const [index,fixture] of fixtures.entries()) {
+    const prepared=await request(tokens[index],'/rest/v1/rpc/begin_academic_cleanup','POST',{p_course_id:fixture.courseId,p_material_id:fixture.sourceId})
+    assert(prepared.ok && prepared.data?.manifest?.some(entry => entry.bucket==='study-sources' && entry.path===fixture.sourceText),'Cleanup must capture the original before metadata deletion.')
+    const job=prepared.data
+    assert(!(await request(tokens[index],'/rest/v1/rpc/finish_academic_cleanup','POST',{p_job_id:job.id})).ok,'Finalization must fail while the original exists.')
+    assert(!(await request(tokens[index],`/storage/v1/object/${objectPath('study-sources',fixture.sourceText.replace('original.txt','late.txt'))}`,'POST',Buffer.from('Late write'),'text/plain')).ok,'Late uploads during cleanup must fail.')
+    const foreignJob=await request(tokens[1-index],`/rest/v1/academic_cleanup_jobs?id=eq.${job.id}`)
+    assert(foreignJob.ok && foreignJob.data.length===0,'Cleanup jobs are private.')
+    for (const bucket of new Set(job.manifest.map(entry => entry.bucket))) {
+      const paths=job.manifest.filter(entry => entry.bucket===bucket).map(entry => entry.path)
+      assert(paths.every(path => path.startsWith(`${fixture.userId}/${fixture.courseId}/`)),'Unexpected fixture cleanup path.')
+      assert((await request(tokens[index],`/storage/v1/object/${bucket}`,'DELETE',{prefixes:paths})).ok,'Owner cleanup must remove the original.')
+    }
+    assert((await request(tokens[index],'/rest/v1/rpc/finish_academic_cleanup','POST',{p_job_id:job.id})).ok,'Cleanup finalization must succeed after Storage.')
+    assert((await request(tokens[index],'/rest/v1/rpc/finish_academic_cleanup','POST',{p_job_id:job.id})).ok,'Finalization is idempotent.')
+    console.log(`PASS owner ${index===0?'A':'B'} normalized source, private queue and blobs-before-metadata cleanup`)
+  }
   passed = true
   console.log('PASS: two-user academic isolation checks completed against the configured project.')
 } finally {
   let clean = true
   for (const [index, fixture] of fixtures.entries()) {
     for (const file of fixtureFiles) {
-      const foreignTarget = file.bucket === 'study-pdfs' ? `${fixture.userId}/${fixture.courseId}/${fixture.uploadMaterialId}/original.pdf` : file.bucket === 'conversation-images' ? `${fixture.userId}/${fixture.threadId}/${fixture.messageId}/1.png` : `${fixture.userId}/${fixture.courseId}/solutions/${fixture.solutionId}/forged.png`
+      const foreignTarget = file.bucket === 'study-sources' ? `${fixture.userId}/${fixture.courseId}/${fixture.sourceId}/forged.txt` : file.bucket === 'study-pdfs' ? `${fixture.userId}/${fixture.courseId}/${fixture.uploadMaterialId}/original.pdf` : file.bucket === 'conversation-images' ? `${fixture.userId}/${fixture.threadId}/${fixture.messageId}/1.png` : `${fixture.userId}/${fixture.courseId}/solutions/${fixture.solutionId}/forged.png`
       const result = await request(tokens[index], `/storage/v1/object/${file.bucket}`, 'DELETE', { prefixes: [fixture[file.field], foreignTarget] }).catch(() => ({ ok: false }))
       if (!result.ok) clean = false
     }

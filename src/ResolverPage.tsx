@@ -24,9 +24,9 @@ const suggestions: Record<string, string[]> = {
 const categories = Object.keys(suggestions)
 
 type PendingRequest = { threadId: string; question: string; category: string; deep: boolean; images: ImageAttachment[]; context: string }
-export function ResolverPage({ workspaceId, initialThreadId, onSave, onPractice }: {
+export function ResolverPage({ workspaceId, initialThreadId, onSave, onPractice, onSaveAsNote }: {
   workspaceId: string; initialThreadId?: string; onSave: (draft: SolutionDraft) => void;
-  onPractice?: (question: string, answer: string) => void
+  onPractice?: (question: string, answer: string) => void; onSaveAsNote: (question: string,answer: string) => void
 }) {
   const { user } = useAuth()
   const conversation = useConversation({ scope: 'general', workspaceId }, initialThreadId)
@@ -120,7 +120,7 @@ export function ResolverPage({ workspaceId, initialThreadId, onSave, onPractice 
       <EarlierMessages conversation={conversation}/>
       {messages.length ? messages.map(message => message.role === 'user'
         ? <div className="solver-turn user" key={message.id}><div className="solver-user-bubble"><p>{message.content}</p>{!!message.metadata.imageCount && <small>📎 {message.metadata.imageCount} {message.metadata.imageCount === 1 ? 'imagen' : 'imágenes'}</small>}</div></div>
-        : <div className="solver-turn assistant" key={message.id}><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-assistant-bubble"><div className="solver-message-head"><strong>Nexo IA</strong><div className="solver-answer-actions"><button onClick={() => void copyAnswer(message)}>{copiedId === message.id ? '✓ Copiado' : 'Copiar'}</button><button onClick={() => void saveAnswer(message)}>Guardar</button>{onPractice && <button onClick={() => onPractice(sourceFor(message)?.content ?? activeThread?.title ?? '', message.content)}>Practicar esto</button>}</div></div><div className="solver-answer"><ResponseRenderer text={message.content}/></div></div></div>)
+        : <div className="solver-turn assistant" key={message.id}><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-assistant-bubble"><div className="solver-message-head"><strong>Nexo IA</strong><div className="solver-answer-actions"><button onClick={() => void copyAnswer(message)}>{copiedId === message.id ? '✓ Copiado' : 'Copiar'}</button><button onClick={() => void saveAnswer(message)}>Guardar</button><button onClick={() => onSaveAsNote(sourceFor(message)?.content ?? 'Respuesta de Nexo',message.content)}>Guardar como apunte</button>{onPractice && <button onClick={() => onPractice(sourceFor(message)?.content ?? activeThread?.title ?? '', message.content)}>Practicar esto</button>}</div></div><div className="solver-answer"><ResponseRenderer text={message.content}/></div></div></div>)
         : <div className="solver-empty"><span>✦</span><h3>¿Qué quieres resolver?</h3><p>Escribe una duda o adjunta una imagen. Después puedes seguir preguntando sin perder el contexto.</p><div className="solver-prompts">{(suggestions[category] || suggestions.General).map(suggestion => <button key={suggestion} onClick={() => { setQuestion(suggestion); textareaRef.current?.focus() }}>{suggestion} ↗</button>)}</div></div>}
       {busy && <div className="solver-turn assistant solver-thinking" role="status"><span className="solver-avatar" aria-hidden="true">✦</span><div className="solver-thinking-bubble"><span className="solver-thinking-dots" aria-hidden="true"><i/><i/><i/></span><strong>{stages[thinkingStage]}</strong><small>Nexo está preparando tu respuesta</small></div></div>}
       {error && <div className="solver-error" role="alert"><span>{error}</span>{failedRequest && <button onClick={() => void requestAnswer(failedRequest)}>Reintentar</button>}</div>}

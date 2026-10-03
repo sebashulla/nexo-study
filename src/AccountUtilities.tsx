@@ -29,7 +29,7 @@ export function AccountUtilities({ mode, identity, userId, onClose, onName, coll
   const [name, setName] = useState(identity.fullName)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const title = { profile: 'Mi perfil', settings: 'Configuración', appearance: 'Apariencia', help: 'Ayuda / Guía rápida', feedback: '', admin: '', logout: '' }[mode]
+  const title = { profile: 'Mi perfil', memory: 'Datos y memoria', settings: 'Configuración', appearance: 'Apariencia', help: 'Ayuda / Guía rápida', feedback: '', admin: '', logout: '' }[mode]
   const save = async () => {
     if (!supabase || busy || !name.trim()) return
     setBusy(true); setError('')

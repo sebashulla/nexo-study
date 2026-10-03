@@ -10,7 +10,13 @@ export type SolutionDraft = {
   images: import('./lib/imageUtils').ImageAttachment[]; expectedImages: number
 }
 
-export type MaterialPage = { page: number; text: string }
+export type SourceType = 'pdf' | 'image' | 'docx' | 'pptx' | 'text' | 'web' | 'youtube' | 'note'
+export type SourceBlock = { kind: 'heading' | 'paragraph' | 'list' | 'table' | 'notes'; text: string; level?: number }
+// The numeric page remains a stable unit ordinal for the existing chunk/FK contract.
+export type MaterialPage = { page: number; text: string; heading?: string; timestamp?: number; blocks?: SourceBlock[] }
+export type SourceMetadata = { sourceUrl?: string; mimeType?: string; originalFilename?: string; videoId?: string;
+  author?: string; extractedAt?: string; extraction?: string; units?: { page: number; heading?: string; timestamp?: number }[] }
+export type NormalizedDocument = { title: string; plainText: string; sections: MaterialPage[]; sourceMetadata: SourceMetadata; partial?: boolean; warning?: string }
 export type ProcessingStatus = 'queued' | 'processing' | 'ready' | 'failed'
 export type DocumentKind = 'text' | 'scan' | 'mixed' | 'unknown'
 export type AnalysisStatus = 'not_started' | 'reading' | 'indexing' | 'ready' | 'partial' | 'failed'
@@ -50,8 +56,13 @@ export type Material = {
   title: string
   text: string
   createdAt: string
-  sourceType?: 'text' | 'pdf'
+  sourceType?: SourceType
   sourceName?: string
+  sourceMetadata?: SourceMetadata
+  processingError?: string
+  archivedAt?: string
+  deletionPending?: boolean
+  sourceRevision?: number
   pages?: MaterialPage[]
   pageCount?: number
   pdfBytes?: number
@@ -78,6 +89,7 @@ export type Course = {
   name: string
   emoji: string
   materials: Material[]
+  deletionPending?: boolean
 }
 
 export type Flashcard = { front: string; back: string; sourcePage?: number; concept?: string; difficulty?: 'easy' | 'medium' | 'hard' }

@@ -1,7 +1,7 @@
 import type { SolutionAttachment } from '../types'
 
 export type ConversationScope = { scope: 'general' | 'course' | 'material'; workspaceId: string; courseId?: string; materialId?: string }
-export type ConversationSource = { materialId: string; materialTitle: string; pageStart: number; pageEnd: number }
+export type ConversationSource = { materialId: string; materialTitle: string; pageStart: number; pageEnd: number; referenceLabel?: string }
 export type ConversationMetadata = {
   sources?: ConversationSource[]; page?: number; category?: string; deep?: boolean;
   imageCount?: number; attachments?: SolutionAttachment[]; attachmentsReady?: boolean;

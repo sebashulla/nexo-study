@@ -69,3 +69,11 @@ El script actualizado comprueba SELECT/INSERT/UPDATE/DELETE en las cuatro tablas
 **Estado de este entorno: ⚠️ PARTIAL para Supabase live.** Se ejecuta SQL local con PostgreSQL y se prueban permisos simulados del navegador, pero faltan URL/clave pública y dos sesiones ordinarias de un proyecto de prueba para la validación HTTP. No afirmar “RLS validado” contra producción.
 
 La FK de course elimina filas pero no objetos Storage. El borrado explícito de conversación elimina sus imágenes primero. Una eliminación externa de curso requiere limpiar antes sus prefijos privados; no se implementa garbage collector remoto.
+
+## Universal sources y cleanup: comprobación V0.9.7
+
+Primero aplicar 010 y 011 dos veces en el proyecto de prueba. El script A/B actualizado incluye study-sources: subir, descargar, firmar, negar acceso público, negar rutas/firma/borrado ajenos, commit normalizado propio y RPCs ajenos. Valida que begin registre el original, finish falle antes de Storage, nuevas cargas queden bloqueadas y finish sea repetible después de la limpieza. Usa solamente fixtures de la ejecución y sesiones ordinarias; no service_role. No se ha ejecutado contra Supabase en este entorno por falta de proyecto de prueba y dos sesiones.
+
+011 sustituye la limitación histórica de borrado externo descrita arriba: DELETE de curso/material con objetos privados existentes falla; el flujo explícito crea una operación durable, borra blobs primero y finalmente metadatos. Los jobs completos se conservan como tombstones para impedir resurrección desde cachés antiguas. No son un recolector automático para objetos creados fuera de las rutas permitidas.
+
+Comprobar también: fallo parcial de Storage → job failed + fila conservada; reabrir app → aviso de limpieza y reintento; dos pestañas/edición frente a archive/rename → revisión vieja rechazada; upload concurrente frente a begin → manifest completo o carga denegada; material eliminado → sus chunks, temas, recursos, chats y evidencia desaparecen, curso/soluciones generales permanecen. Course cleanup incluye soluciones y chats del curso. Verificar instalación de triggers en storage.objects con el rol de migraciones autorizado.

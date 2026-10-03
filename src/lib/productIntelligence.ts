@@ -33,7 +33,7 @@ export function courseRecommendations(course: Course, activity: StudyActivity, m
     !Object.keys(activity[material.id]?.answers ?? {}).length && !Object.keys(activity[material.id]?.practiceAttempts ?? {}).length)
   if (unpracticed) result.push({ id: `practice:${unpracticed.id}`, text: `Todavía no has practicado ${unpracticed.title}.`,
     action: 'practice', materialId: unpracticed.id })
-  const partial = course.materials.find(material => material.analysisStatus === 'partial' &&
+  const partial = course.materials.find(material => material.sourceType === 'pdf' && material.analysisStatus === 'partial' &&
     material.documentKind !== 'scan' && (material.analyzedPages?.length ?? 0) < (material.pageCount ?? 0))
   if (partial) result.push({ id: `analyze:${partial.id}`, text: `${partial.analyzedPages?.length ?? 0} de ${partial.pageCount} páginas preparadas en ${partial.title}.`,
     action: 'analyze', materialId: partial.id })
@@ -72,7 +72,7 @@ export function todayActions(courses: Course[], activity: StudyActivity, memory:
     if (seen && !actions.some(item => item.materialId === seen.materialId)) actions.push({ id: `seen:${seen.key}`, courseId: course.id, materialId: seen.materialId, concept: seen, action: 'practice', text: `${seen.label} · Lo consultaste, aún sin práctica registrada.` })
     const stale = Object.values(memory).filter(item => ids.has(item.materialId) && item.attempts > 0 && item.lastPracticed && Date.now() - new Date(item.lastPracticed).getTime() >= 6 * 86400000).sort((a,b) => (a.lastPracticed ?? '').localeCompare(b.lastPracticed ?? ''))[0]
     if (stale && !actions.some(item => item.materialId === stale.materialId)) actions.push({ id: `stale:${stale.key}`, courseId: course.id, materialId: stale.materialId, concept: stale, action: 'review', text: `${stale.label} · Sin práctica en ${Math.floor((Date.now() - new Date(stale.lastPracticed!).getTime()) / 86400000)} días.` })
-    const partial = course.materials.find(item => item.analysisStatus === 'partial' && !actions.some(action => action.materialId === item.id))
+    const partial = course.materials.find(item => item.sourceType === 'pdf' && item.analysisStatus === 'partial' && !actions.some(action => action.materialId === item.id))
     if (partial) actions.push({ id: `analyze:${partial.id}`, courseId: course.id, materialId: partial.id, action: 'analyze', text: `${partial.title} · ${partial.analyzedPages?.length ?? 0} de ${partial.pageCount ?? '…'} páginas preparadas.` })
   }
   return actions.slice(0, 2)

@@ -19,6 +19,13 @@ function readEvidence(key: string): ConceptEvidence[] {
   try { const value: unknown = JSON.parse(localStorage.getItem(key) ?? '[]'); return Array.isArray(value) ? value.filter(item => item && typeof item.id === 'string' && typeof item.conceptKey === 'string' && typeof item.materialId === 'string') : [] } catch { return [] }
 }
 export const pendingEvidence = (userId: string) => readEvidence(queueKey(userId))
+export function discardMaterialEvidence(userId: string, materialIds: string[]) {
+  const ids = new Set(materialIds)
+  try {
+    localStorage.setItem(queueKey(userId),JSON.stringify(pendingEvidence(userId).filter(item => !ids.has(item.materialId))))
+    localStorage.setItem(cacheKey(userId),JSON.stringify(recentEvidence(userId).filter(item => !ids.has(item.materialId))))
+  } catch { /* Server cleanup already completed; storage denial must not stop UI cleanup. */ }
+}
 export const recentEvidence = (userId: string) => readEvidence(cacheKey(userId))
 export function forgetConversationEvidence(userId: string, threadId: string) {
   localStorage.setItem(cacheKey(userId), JSON.stringify(recentEvidence(userId).filter(item => item.threadId !== threadId)))

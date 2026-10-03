@@ -1,7 +1,7 @@
 {
   "name": "nexo-study-mvp",
   "private": true,
-  "version": "0.9.6",
+  "version": "0.9.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "start:api": "node server.mjs",
     "test:e2e": "playwright test",
+    "test:sources": "node --test server/sourceExtraction.test.mjs",
     "test:engine": "node --test server/aiEngine.test.mjs",
     "test:security:live": "node scripts/validate-academic-security.mjs",
     "test:schema": "node scripts/test-learning-schema.mjs"
@@ -20,6 +21,7 @@
     "@supabase/supabase-js": "latest",
     "@vitejs/plugin-react": "latest",
     "katex": "^0.18.7",
+    "parse5": "8.0.1",
     "pdfjs-dist": "^6.3.289",
     "react": "latest",
     "react-dom": "latest",

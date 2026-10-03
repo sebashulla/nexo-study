@@ -1,4 +1,5 @@
 import type { Material, MaterialChunk, MaterialTopic } from '../types'
+import { sourceReference } from './sourceModel'
 
 const MAX_CHUNK_CHARS = 2600
 const STOP_WORDS = new Set('a al algo ante bajo con contra de del desde donde el ella en entre es esta este esto ha hay la las lo los más no o para por que se sin sobre su sus un una unas unos y ya'.split(' '))
@@ -100,7 +101,7 @@ export type RetrievedChunk = MaterialChunk & { materialTitle: string; score: num
 
 export function retrieveCourseChunks(question: string, materials: Material[], limit = 5): RetrievedChunk[] {
   const query = [...new Set(terms(question))]
-  const candidates = materials.flatMap(material => (material.chunks?.length ? material.chunks : material.text.length <= 15000 && material.text ? chunksForMaterial(material) : [])
+  const candidates = materials.filter(material => !material.archivedAt && !material.deletionPending && (material.processingStatus === undefined || material.processingStatus === 'ready' || material.sourceType === 'pdf' && material.analysisStatus === 'partial')).flatMap(material => (material.chunks?.length ? material.chunks : material.text.length <= 15000 && material.text ? chunksForMaterial(material) : [])
     .map(chunk => {
       const chunkTerms = terms(chunk.text)
       const counts = new Map<string, number>()
@@ -115,8 +116,9 @@ export function retrieveCourseChunks(question: string, materials: Material[], li
 export function contextForQuestion(question: string, materials: Material[]) {
   const chosen = retrieveCourseChunks(question, materials)
   const context = chosen.map(chunk => {
-    const pages = chunk.pageStart === chunk.pageEnd ? `página ${chunk.pageStart}` : `páginas ${chunk.pageStart}–${chunk.pageEnd}`
+    const pages = sourceReference(materials.find(material => material.id === chunk.materialId),chunk.pageStart,chunk.pageEnd)
     return `[${chunk.materialTitle} · ${pages}]\n${chunk.text}`
   }).join('\n\n')
-  return { context: context.slice(0, 13500), sources: chosen.map(chunk => ({ materialId: chunk.materialId, materialTitle: chunk.materialTitle, pageStart: chunk.pageStart, pageEnd: chunk.pageEnd })) }
+  return { context: context.slice(0, 13500), sources: chosen.map(chunk => ({ materialId: chunk.materialId, materialTitle: chunk.materialTitle, pageStart: chunk.pageStart, pageEnd: chunk.pageEnd,
+    referenceLabel: sourceReference(materials.find(material => material.id === chunk.materialId),chunk.pageStart,chunk.pageEnd) })) }
 }

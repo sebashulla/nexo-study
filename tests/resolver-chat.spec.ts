@@ -1,3 +1,4 @@
+import { studyFixtureCourses } from './helpers/studyFixtures'
 import { expect, test, type Page } from '@playwright/test'
 
 const user = { id: '12345678-1234-4234-8234-123456789012', aud: 'authenticated', role: 'authenticated', email: 'estudiante@example.com', user_metadata: { full_name: 'Estudiante Nexo' }, app_metadata: {}, created_at: '2026-01-01T00:00:00Z' }
@@ -12,6 +13,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 async function login(page: Page) {
+  await page.addInitScript(({id,data}) => { const key=`nexo-study-courses-v5:${id}`; if(!localStorage.getItem(key)) localStorage.setItem(key,JSON.stringify(data)) },{id:user.id,data:studyFixtureCourses})
   await page.goto('/')
   await page.getByLabel('Correo electrónico', { exact: true }).fill(user.email)
   await page.getByLabel('Contraseña', { exact: true }).fill('UnaClave123!')

@@ -1,6 +1,7 @@
 import type { Flashcard, Material, QuizQuestion, StudyArtifact, StudyArtifactType } from '../types'
 import { callAI } from './aiClient'
 import { chunksForMaterial } from './learningContext'
+import { sourceReference } from './sourceModel'
 export { artifactPage } from './artifactScope'
 
 type JsonRecord = Record<string, unknown>
@@ -67,16 +68,41 @@ function sampledContext(material: Material) {
   const chunks = material.chunks?.length ? material.chunks : material.text.length <= 15000 ? chunksForMaterial(material) : []
   const count = Math.min(chunks.length, 6)
   const chosen = Array.from({ length: count }, (_, index) => chunks[Math.round(index * (chunks.length - 1) / Math.max(1, count - 1))])
-  return chosen.map(chunk => `[Página ${chunk.pageStart}${chunk.pageEnd !== chunk.pageStart ? `–${chunk.pageEnd}` : ''}] ${chunk.text}`).join('\n\n').slice(0, 15000)
+  return chosen.map(chunk => `[Unidad ${chunk.pageStart} · ${sourceReference(material,chunk.pageStart,chunk.pageEnd)}] ${chunk.text}`).join('\n\n').slice(0, 15000)
+}
+
+// References may only target units actually supplied to the model. Missing
+// references stay absent; an invented unit fails the artifact rather than
+// opening an unrelated section in the reader.
+export function validateArtifactReferences(payload: unknown, allowedUnits: ReadonlySet<number>) {
+  const data = record(payload)
+  for (const name of ['cards','questions','items']) {
+    const rows = data?.[name]
+    if (!Array.isArray(rows)) continue
+    for (const value of rows) {
+      const unit = record(value)?.sourcePage
+      if (unit === undefined || unit === null) continue
+      if (typeof unit !== 'number' || !Number.isInteger(unit) || !allowedUnits.has(unit))
+        throw new Error('Nexo citó una unidad que no estaba en el contenido. Reintenta la generación.')
+    }
+  }
 }
 
 export async function generateArtifactWithAI(courseId: string, courseName: string, material: Material, type: Exclude<StudyArtifactType, 'exam'>, sourcePage?: number): Promise<unknown> {
   const context = sampledContext(material)
   const instruction = type === 'summary' ? 'Devuelve JSON {"summary":"síntesis breve de hasta 500 caracteres"}. Explica la idea central sin copiar el texto bruto.' : promptByType[type]
   const raw = await callAI({ task: 'artifact', artifactType: type, question:
-    `Curso: ${courseName}. Material: ${material.title}.\nGenera únicamente el artefacto solicitado. Usa solo el texto, conserva las páginas y no inventes información.\n${instruction}${sourcePage ? `\nUsa exclusivamente la página ${sourcePage}. ${type === 'flashcards' ? 'Crea entre 3 y 5 tarjetas.' : type === 'multiple_choice' ? 'Crea 5 preguntas.' : ''}` : ''}\n\nMATERIAL:\n${context}`,
+    `Curso: ${courseName}. Material: ${material.title}.\nGenera únicamente el artefacto solicitado. Usa solo el texto y no inventes información. sourcePage debe ser el ordinal numérico de Unidad, que representa ${material.sourceType === 'pptx' ? 'una diapositiva' : material.sourceType === 'youtube' ? 'un segmento con timestamp' : material.sourceType === 'pdf' ? 'una página' : 'una sección'}.\n${instruction}${sourcePage ? `\nUsa exclusivamente ${sourceReference(material,sourcePage)} (Unidad ${sourcePage}). ${type === 'flashcards' ? 'Crea entre 3 y 5 tarjetas.' : type === 'multiple_choice' ? 'Crea 5 preguntas.' : ''}` : ''}\n\nMATERIAL:\n${context}`,
     category: courseName, courseId, materialId: material.id, page: sourcePage, mode: 'standard', deep: false })
   const parsed = parseJson(raw)
+  const allowedUnits = new Set<number>()
+  for (const match of context.matchAll(/\[Unidad (\d+)/g)) {
+    const start = Number(match[1]); allowedUnits.add(start)
+    for (const chunk of material.chunks ?? []) if (chunk.pageStart === start)
+      for (let unit = start; unit <= Math.min(chunk.pageEnd,start+499); unit++) allowedUnits.add(unit)
+  }
+  if (!sourcePage) validateArtifactReferences(parsed,allowedUnits)
+
   if (type === 'summary') {
     const summary = text(parsed.summary, 500)
     if (!summary) throw new Error('Nexo no pudo resumir esta página.')

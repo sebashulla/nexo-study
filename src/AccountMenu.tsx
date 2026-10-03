@@ -1,12 +1,12 @@
 import { PopupMenu } from './PopupMenu'
 import { Icon } from './Icon'
 
-export type AccountAction = 'profile' | 'settings' | 'appearance' | 'feedback' | 'help' | 'admin' | 'logout'
+export type AccountAction = 'profile' | 'memory' | 'settings' | 'appearance' | 'feedback' | 'help' | 'admin' | 'logout'
 export type AccountIdentity = { fullName: string; username: string; email: string; isAdmin: boolean }
 const groups: { action: AccountAction; label: string; icon: string }[][] = [
-  [{ action: 'profile', label: 'Mi perfil', icon: 'person' }, { action: 'settings', label: 'Configuración', icon: 'settings' }, { action: 'appearance', label: 'Apariencia', icon: 'appearance' }],
+  [{ action: 'profile', label: 'Mi perfil', icon: 'person' }, { action: 'memory', label: 'Datos y memoria', icon: 'settings' }, { action: 'appearance', label: 'Apariencia', icon: 'appearance' }],
   [{ action: 'feedback', label: 'Enviar comentarios', icon: 'chat' }, { action: 'help', label: 'Ayuda / Guía rápida', icon: 'help' }],
-  [{ action: 'admin', label: 'Administración', icon: 'shield' }, { action: 'admin', label: 'Feedback recibido', icon: 'chat' }],
+  [{ action: 'admin', label: 'Administración', icon: 'shield' }],
   [{ action: 'logout', label: 'Cerrar sesión', icon: 'logout' }],
 ]
 

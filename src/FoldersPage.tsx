@@ -5,7 +5,7 @@ import { coursesInWorkspace, GENERAL_WORKSPACE, type StudyWorkspace, type Worksp
 
 const folderEmojis = ['📁', '🎓', '🧠', '🧪', '🩺', '📐', '📚', '🎯']
 
-export function FoldersPage({ allCourses, folders, memberships, selected, activity, onSelect, onCreate, onMove, onDelete, onOpenCourse }: {
+export function FoldersPage({ allCourses, folders, memberships, selected, activity, onSelect, onCreate, onMove, onDelete, onOpenCourse, onAdd }: {
   allCourses: Course[]
   folders: StudyWorkspace[]
   memberships: WorkspaceMembership[]
@@ -16,6 +16,7 @@ export function FoldersPage({ allCourses, folders, memberships, selected, activi
   onMove: (courseId: string, workspaceId: string) => Promise<void>
   onDelete: (id: string) => Promise<void>
   onOpenCourse: (id: string) => void
+  onAdd: () => void
 }) {
   const [creating, setCreating] = useState(false)
   const [bringing, setBringing] = useState(false)
@@ -54,7 +55,7 @@ export function FoldersPage({ allCourses, folders, memberships, selected, activi
     finally { setBusy(false) }
   }
 
-  return <div className="workspace-explorer">
+  return <div className="workspace-explorer"><button className="secondary" onClick={onAdd}>＋ Agregar material</button>
     <div className="explorer-toolbar"><span>CARPETAS</span><button onClick={() => { setCreating(value => !value); setBringing(false) }} aria-expanded={creating}>＋ Nuevo espacio</button></div>
     {creating && <div className="explorer-create"><div className="folder-emoji-row">{folderEmojis.map(emoji => <button key={emoji} aria-label={`Emoji ${emoji}`} aria-pressed={folderEmoji === emoji} className={folderEmoji === emoji ? 'active' : ''} onClick={() => setFolderEmoji(emoji)}>{emoji}</button>)}</div><input autoFocus maxLength={60} aria-label="Nombre del espacio" placeholder="Nombre del espacio" value={folderName} onChange={event => setFolderName(event.target.value)} onKeyDown={event => event.key === 'Enter' && void create()}/><div className="explorer-create-actions"><button className="primary" disabled={busy || !folderName.trim()} onClick={create}>{busy ? 'Creando…' : 'Crear espacio'}</button><button className="secondary" onClick={() => setCreating(false)}>Cancelar</button></div></div>}
     {error && <div role="alert" className="auth-alert error">{error}</div>}

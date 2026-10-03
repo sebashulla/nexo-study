@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { navigateSection } from './helpers/navigation'
+import { navigateSection, selectLibraryFilter } from './helpers/navigation'
 import { academicMock, login, png, user } from './helpers/academicMock'
 import { todayActions } from '../src/lib/productIntelligence'
 import { applyRecall, masterySummary } from '../src/lib/learningState'
@@ -49,7 +49,7 @@ test('Resolver saves multiple private images, restores library, deduplicates and
   expect(modelCalls).toBe(1)
   await dialog.getByRole('button', { name: 'Cerrar diálogo' }).click()
   await page.reload()
-  await page.getByRole('group', { name: 'Filtrar biblioteca' }).getByRole('button', { name: 'Soluciones', exact: true }).click()
+  await selectLibraryFilter(page, 'Soluciones')
   await expect(page.locator('.library-entry')).toContainText('¿Qué es la energía cinética?')
   await page.goto('/resolver')
   await page.getByRole('button', { name: 'Guardar', exact: true }).click()
@@ -70,7 +70,7 @@ test('Resolver saves multiple private images, restores library, deduplicates and
   await expect(page.getByRole('textbox', { name: 'Preguntar sobre el curso' })).toHaveValue(/energía cinética/)
   await expect(page.locator('.chat-page-context')).toContainText('solución guardada')
   await page.goto(`/courses/${course.id}/library`)
-  await page.getByRole('group', { name: 'Filtrar biblioteca' }).getByRole('button', { name: 'Soluciones', exact: true }).click()
+  await selectLibraryFilter(page, 'Soluciones')
   await page.locator('.library-entry').click()
   dialog = page.getByRole('dialog')
   await dialog.getByRole('button', { name: 'Eliminar', exact: true }).click()
@@ -116,7 +116,7 @@ test('page chat and cached artifacts use only the chosen page; errors update the
   await page.getByRole('spinbutton', { name: 'Página del documento' }).fill('2')
   await page.locator('.page-context-tools summary').click()
   await page.locator('.page-context-tools').getByRole('button', { name: 'Preguntar a Nexo' }).click()
-  await expect(page.locator('.page-chat-context')).toContainText('Página 2')
+  await expect(page.locator('.page-chat-context')).toContainText('página 2')
   await page.getByRole('textbox', { name: 'Preguntar sobre este material' }).fill('¿Qué aprenderé aquí?')
   await page.locator('.material-chat-composer').getByRole('button', { name: 'Preguntar a Nexo' }).click()
   await expect(page.locator('.material-chat-answer')).toContainText('energía cinética')
@@ -141,7 +141,7 @@ test('page chat and cached artifacts use only the chosen page; errors update the
   await page.locator('.page-artifact-view .quiz-card').first().getByRole('button', { name: /Solo volumen/ }).click()
   if (page.viewportSize()!.width <= 700) await page.getByRole('button', { name: 'Volver al material o curso' }).click()
   await page.getByRole('button', { name: /← Física de prueba/ }).click()
-  await expect(page.locator('.course-recommendations')).toContainText('repaso')
+  await expect(page.locator('.course-recommendations').filter({hasText:'repaso'})).toContainText('repaso')
   await navigateSection(page, 'Inicio')
   await expect(page.locator('.hero-card')).toHaveCount(0)
   await expect(page.locator('.home-today')).toContainText('conceptos por reforzar')
@@ -150,7 +150,7 @@ test('page chat and cached artifacts use only the chosen page; errors update the
   await expect(page.locator('.stat-card').filter({ hasText: 'Dominio estimado' })).toContainText('Sin datos suficientes')
   await expect(page.locator('.progress-recent')).toContainText('1 preguntas respondidas')
   await page.goto(`/courses/${course.id}/library`)
-  await page.getByRole('group', { name: 'Filtrar biblioteca' }).getByRole('button', { name: 'Flashcards', exact: true }).click()
+  await selectLibraryFilter(page, 'Flashcards')
   await page.locator('.library-entry').click()
   await expect(page.locator('.page-artifact-view')).toContainText('Página 2 · Flashcards')
   await page.locator('.page-artifact-view .flashcard').click()
@@ -263,9 +263,11 @@ test('mobile header, drawer, suggestions, accordions and search fit all target w
     await expect(page.locator('.solver-composer')).toBeVisible()
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
     if (width >= 1101) {
-      const layout = await page.locator('.solver-layout').boundingBox()
-      const chat = await page.locator('.solver-chat').boundingBox()
-      expect(chat!.width).toBeGreaterThanOrEqual(layout!.width * .95)
+      await expect.poll(async () => {
+        const layout = await page.locator('.solver-layout').boundingBox()
+        const chat = await page.locator('.solver-chat').boundingBox()
+        return chat!.width / layout!.width
+      }).toBeGreaterThanOrEqual(.95)
     }
     if (width < 700) {
       await expect(page.locator('.mobile-title')).toHaveText('Resolver')
@@ -302,7 +304,7 @@ test('mobile header, drawer, suggestions, accordions and search fit all target w
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
     await page.screenshot({ path: info.outputPath(`workspace-${width}.png`) })
     await visit(`/courses/${course.id}/library`)
-    await expect(page.locator('.course-artifact-library')).toBeVisible()
+    await expect(page.locator('.library-v2')).toBeVisible()
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width + 1)
   }
 })

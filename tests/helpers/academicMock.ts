@@ -13,6 +13,7 @@ export async function academicMock(page: Page, options: { identity?: typeof user
   const uploaded: string[] = []
   const removed: string[] = []
   const signed: string[] = []
+  const blobs = new Map<string,{ body: Buffer; mime: string }>()
   const control = { failUpload: 0, failRemoval: false, failConversation: false, failEvidence: false, failConversationUpload: false }
   const conversationUploaded: string[] = []
   const tableRows = (name: string) => {
@@ -114,6 +115,48 @@ export async function academicMock(page: Page, options: { identity?: typeof user
       }
       return route.fulfill({ json: null })
     }
+    if (table === 'commit_source_document' || table === 'archive_source_material' || table === 'rename_source_material') {
+      const mat = tableRows('materials').get(body.p_material_id), course = tableRows('courses').get(body.p_course_id)
+      if (!mat || mat.user_id !== identity.id || mat.course_id !== body.p_course_id || course?.user_id !== identity.id || (mat.metadata as Row)?.deletionPending) return fail()
+      const revision = Number((mat.metadata as Row)?.sourceRevision ?? 0)
+      if (table !== 'archive_source_material' && revision !== body.p_expected_revision) return route.fulfill({ status:409,json:{ message:'Source changed; refresh before saving',code:'40001' } })
+      if (table === 'rename_source_material') { mat.title=body.p_title; mat.metadata={ ...mat.metadata as Row, sourceRevision:revision+1 }; return route.fulfill({ json:null }) }
+      if (table === 'archive_source_material') { mat.metadata={ ...mat.metadata as Row,archivedAt:body.p_archived ? new Date().toISOString() : null,sourceRevision:revision+1 }; return route.fulfill({ json:revision+1 }) }
+      const doc=body.p_document
+      Object.assign(mat,{ title:doc.title,content:doc.text,pages:doc.pages,page_count:doc.pages.length,processing_status:'ready',analysis_status:doc.analysis_status,analyzed_pages:doc.pages.map((p: Row) => p.page),document_kind:'text',study_pack:null,study_pack_meta:null,metadata:{ ...mat.metadata as Row,...doc.metadata,sourceRevision:revision+1 } })
+      for (const name of ['material_chunks','material_topics']) for (const [key,row] of tableRows(name)) if (row.material_id===mat.id) tableRows(name).delete(key)
+      for (const chunk of doc.chunks) tableRows('material_chunks').set(chunk.id,{ id:chunk.id,user_id:identity.id,course_id:mat.course_id,material_id:mat.id,page_start:chunk.pageStart,page_end:chunk.pageEnd,content:chunk.text,keywords:chunk.keywords })
+      for (const topic of doc.topics) tableRows('material_topics').set(topic.id,{ id:topic.id,user_id:identity.id,course_id:mat.course_id,material_id:mat.id,title:topic.title,summary:topic.summary,page_start:topic.pageStart,page_end:topic.pageEnd,keywords:topic.keywords })
+      let version=0
+      for (const row of tableRows('study_artifacts').values()) if (row.source_material_id===mat.id) { version=Math.max(version,Number(row.version)); row.status='failed'; row.error_message='El contenido cambió. Vuelve a generar este recurso.' }
+      const id=crypto.randomUUID(); tableRows('study_artifacts').set(id,{ id,user_id:identity.id,course_id:mat.course_id,source_material_id:mat.id,type:'summary',status:'ready',payload:doc.summary,version:version+1,created_at:new Date().toISOString(),updated_at:new Date().toISOString() })
+      return route.fulfill({ json:null })
+    }
+    if (table === 'begin_academic_cleanup') {
+      if (tableRows('courses').get(body.p_course_id)?.user_id!==identity.id) return fail()
+      const jobs=tableRows('academic_cleanup_jobs'), existing=[...jobs.values()].find(job => job.course_id===body.p_course_id && (job.material_id??null)===(body.p_material_id??null) && job.status!=='complete')
+      if (existing) return route.fulfill({ json:existing })
+      const targets=[...tableRows('materials').values()].filter(mat => mat.course_id===body.p_course_id && (!body.p_material_id || mat.id===body.p_material_id))
+      if (body.p_material_id && !targets.length) return fail()
+      for (const mat of targets) mat.metadata={ ...mat.metadata as Row,deletionPending:true }
+      const prefix=`${identity.id}/${body.p_course_id}/`, manifest=[...blobs.keys()].filter(key => key.includes(prefix) && (!body.p_material_id || key.includes(`/${body.p_material_id}/`))).map(key => ({ bucket:key.split('/')[0],path:key.split('/').slice(1).join('/') }))
+      const job={ id:crypto.randomUUID(),user_id:identity.id,course_id:body.p_course_id,material_id:body.p_material_id,status:'pending',manifest }; jobs.set(job.id,job); return route.fulfill({ json:job })
+    }
+    if (table === 'record_academic_cleanup_failure') { const job=tableRows('academic_cleanup_jobs').get(body.p_job_id); if(!job || job.user_id!==identity.id) return fail(); job.status='failed'; return route.fulfill({ json:null }) }
+    if (table === 'finish_academic_cleanup') {
+      const job=tableRows('academic_cleanup_jobs').get(body.p_job_id); if(!job || job.user_id!==identity.id) return fail()
+      if ((job.manifest as Row[]).some(entry => blobs.has(`${entry.bucket}/${entry.path}`))) return fail('Storage must be cleared first')
+      const ids=[...tableRows('materials').values()].filter(mat => mat.course_id===job.course_id && (!job.material_id || mat.id===job.material_id)).map(mat => mat.id)
+      const threads=[...tableRows('conversation_threads').values()].filter(t => t.course_id===job.course_id && (!job.material_id || t.material_id===job.material_id)).map(t => t.id)
+      for (const [name,records] of rows) if (name!=='academic_cleanup_jobs') for (const [key,row] of records) {
+        if (name==='materials' && ids.includes(row.id) || ['material_chunks','material_topics','concept_evidence','learning_state','study_progress'].includes(name) && ids.includes(row.material_id) || name==='study_artifacts' && ids.includes(row.source_material_id) || name==='conversation_threads' && threads.includes(row.id) || name==='conversation_messages' && threads.includes(row.thread_id) || !job.material_id && row.course_id===job.course_id || !job.material_id && name==='courses' && row.id===job.course_id) records.delete(key)
+      }
+      job.status='complete'; return route.fulfill({ json:null })
+    }
+    if (table === 'search_material_chunks_v2') {
+      const chunks=[...tableRows('material_chunks').values()].filter(row => row.user_id===identity.id && row.course_id===body.p_course_id && (!body.p_material_id || row.material_id===body.p_material_id) && !(tableRows('materials').get(String(row.material_id))?.metadata as Row)?.archivedAt).slice(0,body.p_limit??6)
+      return route.fulfill({ json:chunks })
+    }
     const records = tableRows(table)
     let selected = [...records.values()].filter(row => (!row.user_id || row.user_id === identity.id) && matches(row, url))
     const order = url.searchParams.get('order')
@@ -127,6 +170,7 @@ export async function academicMock(page: Page, options: { identity?: typeof user
       for (const row of incoming) {
         const key = table === 'study_progress' ? String(row.material_id) : table === 'learning_state' ? `${row.material_id}:${row.concept_key}` : String(row.id ?? crypto.randomUUID())
         if (table === 'learning_state' && records.get(key)?.evidence_managed) continue
+        if (table === 'materials' && Number((records.get(key)?.metadata as Row)?.sourceRevision ?? 0)>Number((row.metadata as Row)?.sourceRevision ?? 0)) continue
         records.set(key, { ...records.get(key), ...row })
       }
       return route.fulfill({ status: 201, json: single ? incoming[0] : incoming })
@@ -150,11 +194,13 @@ export async function academicMock(page: Page, options: { identity?: typeof user
     const url = new URL(route.request().url())
     if (url.pathname.includes('/object/sign/') && route.request().method() === 'POST') {
       signed.push(url.pathname)
-      return route.fulfill({ json: { signedURL: '/object/sign/solution-images/fixture.png?token=short-lived' } })
+      return route.fulfill({ json: { signedURL: url.pathname.replace('/storage/v1','')+'?token=short-lived' } })
     }
     if (url.pathname.includes('/object/list/')) return route.fulfill({ json: [] })
     if (route.request().method() === 'DELETE') {
       if (control.failRemoval) return route.fulfill({ status: 503, json: { message: 'Removal failed' } })
+      const bucket=url.pathname.split('/').at(-1)!
+      for (const path of route.request().postDataJSON().prefixes) blobs.delete(`${bucket}/${path}`)
       removed.push(...route.request().postDataJSON().prefixes)
       return route.fulfill({ json: [] })
     }
@@ -164,17 +210,20 @@ export async function academicMock(page: Page, options: { identity?: typeof user
         conversationUploaded.push(url.pathname); return route.fulfill({ json: { Key: url.pathname } })
       }
       if (control.failUpload === uploaded.length + 1) return route.fulfill({ status: 503, json: { message: 'Upload failed' } })
-      uploaded.push(url.pathname.split('/solution-images/')[1])
+      const key=url.pathname.split('/object/')[1]
+      blobs.set(key,{ body:route.request().postDataBuffer()??png,mime:route.request().headers()['content-type']??'application/octet-stream' })
+      uploaded.push(key.split('/').slice(1).join('/'))
       return route.fulfill({ json: { Key: url.pathname } })
     }
-    return route.fulfill({ status: 200, contentType: 'image/png', body: png })
+    const key=url.pathname.split('/object/sign/')[1] ?? url.pathname.split('/object/')[1], blob=blobs.get(key)
+    return route.fulfill({ status:200,contentType:blob?.mime??'image/png',body:blob?.body??png })
   })
   return { rows, requests, conversationUploaded, uploaded, removed, signed, control, seedCourse(course: Course) {
     tableRows('courses').set(course.id, { id: course.id, user_id: identity.id, name: course.name, emoji: course.emoji })
     for (const material of course.materials) {
       tableRows('materials').set(material.id, { id: material.id, user_id: identity.id, course_id: course.id, title: material.title, content: material.text,
         source_type: material.sourceType ?? 'text', source_name: material.sourceName, pages: material.pages ?? [], page_count: material.pageCount,
-        processing_status: 'ready', analysis_status: material.analysisStatus ?? 'ready', analyzed_pages: material.analyzedPages ?? [], document_kind: 'text', created_at: material.createdAt, study_pack: material.studyPack })
+        storage_path:material.storagePath,metadata:{ source:material.sourceMetadata??{},sourceRevision:material.sourceRevision??0,archivedAt:material.archivedAt,deletionPending:material.deletionPending },processing_status: material.processingStatus??'ready', analysis_status: material.analysisStatus ?? 'ready', analyzed_pages: material.analyzedPages ?? [], document_kind: 'text', created_at: material.createdAt, study_pack: material.studyPack })
       for (const chunk of material.chunks ?? []) tableRows('material_chunks').set(chunk.id, { id: chunk.id, user_id: identity.id, course_id: course.id, material_id: material.id, page_start: chunk.pageStart, page_end: chunk.pageEnd, content: chunk.text, keywords: chunk.keywords })
       for (const topic of material.topics ?? []) tableRows('material_topics').set(topic.id, { id: topic.id, user_id: identity.id, course_id: course.id, material_id: material.id, title: topic.title, summary: topic.summary, page_start: topic.pageStart, page_end: topic.pageEnd, keywords: topic.keywords })
       for (const artifact of material.artifacts ?? []) tableRows('study_artifacts').set(artifact.id, { ...artifact, user_id: identity.id, course_id: course.id, source_material_id: material.id, created_at: artifact.createdAt, updated_at: artifact.updatedAt })

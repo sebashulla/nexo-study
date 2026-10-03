@@ -1,6 +1,7 @@
+import { studyFixtureCourses } from './helpers/studyFixtures'
 import { expect, test, type Page } from '@playwright/test'
 import { academicMock } from './helpers/academicMock'
-import { demoCourses } from '../src/data/demo'
+
 
 const user = { id: '12345678-1234-4234-8234-123456789012', aud: 'authenticated', role: 'authenticated', email: 'estudiante@example.com', user_metadata: { full_name: 'Estudiante Nexo' }, app_metadata: {}, created_at: '2026-01-01T00:00:00Z' }
 const session = { access_token: 'test-access-token', refresh_token: 'test-refresh-token', token_type: 'bearer', expires_in: 3600, user }
@@ -11,6 +12,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 async function login(page: Page) {
+  await page.addInitScript(({id,data}) => { const key=`nexo-study-courses-v5:${id}`; if(!localStorage.getItem(key)) localStorage.setItem(key,JSON.stringify(data)) },{id:user.id,data:studyFixtureCourses})
   await page.goto('/')
   await page.getByLabel('Correo electrónico', { exact: true }).fill(user.email)
   await page.getByLabel('Contraseña', { exact: true }).fill('UnaClave123!')
@@ -104,6 +106,7 @@ test('a real PDF opens its workspace, contextual Nexo and study mode', async ({ 
   await dialog.getByRole('button', { name: 'Crear curso' }).click()
   await page.getByRole('button', { name: /Agregar material/ }).first().click()
   dialog = page.getByRole('dialog')
+  await dialog.getByRole('button',{name:/^Subir/}).click()
   await dialog.locator('input[type="file"]').setInputFiles({ name: 'celula.pdf', mimeType: 'application/pdf', buffer: onePagePdf() })
   await dialog.getByRole('button', { name: 'Guardar y abrir material' }).click()
   await expect(page).toHaveURL(/\/materials\/[^/]+\/workspace$/)
@@ -204,7 +207,7 @@ test('main workspaces fit common desktop widths', async ({ page }) => {
 
 test('course Nexo retrieves relevant material and a study session survives refresh', async ({ page }) => {
   const mock = await academicMock(page, { identity: user })
-  demoCourses.forEach(course => mock.seedCourse(course))
+  studyFixtureCourses.forEach(course => mock.seedCourse(course))
   let payload: Record<string, unknown> | undefined
   const sessionEvents: string[] = []
   await page.route('**/rest/v1/study_session_events**', route => {
@@ -290,6 +293,13 @@ test('exam mixes prepared question types and gives contextual written feedback',
     return route.fulfill({ json: { text: JSON.stringify(result) } })
   })
   await login(page)
+  // This scenario generates every question type; other scenarios use ready fixtures.
+  await page.evaluate(id => {
+    const key = `nexo-study-courses-v5:${id}`
+    const courses = JSON.parse(localStorage.getItem(key) || '[]')
+    courses.find((course: {id:string}) => course.id === 'course-bio').materials.find((material: {id:string}) => material.id === 'mat-cell').artifacts = []
+    localStorage.setItem(key, JSON.stringify(courses))
+  }, user.id)
   await page.goto('/courses/course-bio/materials/mat-cell/study/exam')
   await page.getByRole('button', { name: 'Preparar opción múltiple' }).click()
   await page.getByRole('button', { name: 'Preparar preguntas escritas' }).click()
