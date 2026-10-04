@@ -1,6 +1,6 @@
 # Migraciones de Nexo Study
 
-Ejecuta los archivos **en orden** desde Supabase → SQL Editor. Una migración aplicada no se edita: cualquier cambio nuevo debe ir en el siguiente número.
+Ejecuta los archivos desde Supabase → SQL Editor. Una migración aplicada no se edita: cualquier cambio nuevo debe ir en el siguiente número. **Instalación nueva: 001–010, después 013.** 013 incluye la instalación corregida de 011/012, que se conservan como historial y fallan con la columna `storage.objects.owner_id` del Storage actual. Para recuperar una 008 incompleta o una 011/012 fallida, seguir los pasos de recuperación 013 al final.
 
 1. `001_profiles.sql` — perfil base ligado a Supabase Auth.
 2. `002_ai_queries.sql` — historial de Resolver/Corrector por usuario.
@@ -13,12 +13,13 @@ Ejecuta los archivos **en orden** desde Supabase → SQL Editor. Una migración 
 
 9. `009_saved_solutions.sql` — soluciones de Resolver guardadas en curso e imágenes privadas.
 10. `010_conversations_learning_evidence.sql` — conversaciones, adjuntos privados, evidencia y cálculo sobre learning_state.
-11. `011_universal_sources.sql` — fuentes universales, originales privados y limpieza recuperable.
-12. `012_repair_pdf_and_source_schema.sql` — recuperación de 008 incompleta, claves de contexto UUID antiguas y 011 fallida; incluye la instalación de 010/011.
+11. `011_universal_sources.sql` — diseño histórico de fuentes universales; usar 013 para instalarlo en Storage actual.
+12. `012_repair_pdf_and_source_schema.sql` — primera recuperación histórica; no resuelve la colisión de `owner_id` del Storage actual. Usar 013.
+13. `013_repair_storage_owner_shadowing.sql` — recuperación completa de PDF/conversaciones/fuentes y corrección del parámetro `owner_id` ocultado por una columna de Storage.
 
 ## Regla de migraciones
 
-No edites una migración que ya ejecutaste en producción. El siguiente cambio de base de datos debe crearse como `011_...sql`.
+No edites una migración que ya ejecutaste en producción. El siguiente cambio de base de datos debe crearse con un número nuevo.
 
 ## Datos académicos de V0.9
 
@@ -38,39 +39,41 @@ Antes de producción, aplica 007 y después 008 en un proyecto de prueba. Verifi
 
 Aplicar 010 después de 009. La migración es aditiva y repetible; preserva intentos anteriores en `legacy_baseline`. No cambia contratos PDF ni las políticas de administración. Threads/messages/evidence tienen RLS exclusivo del dueño; un admin no dispone de excepción académica. General usa workspace NULL para el espacio General; curso/material usan FKs compuestas de propiedad. Su ubicación sigue la pertenencia del curso. Eliminar un espacio limpia únicamente workspace_id en los threads; conserva mensajes, evidencia y adjuntos.
 
-Validación local: `npm run test:schema` ejecuta las doce migraciones en PostgreSQL WASM con esquemas mínimos Auth/Storage. Instalar primero el runtime aislado indicado en `scripts/test-learning-schema.mjs`. Ese test no prueba Supabase real. La comprobación pendiente con sesiones A/B, incluyendo RPCs y Storage HTTP, está en [SECURITY_VALIDATION.md](SECURITY_VALIDATION.md).
+Validación local: `npm run test:schema` ejecuta 001–010 y la recuperación 013 en PostgreSQL WASM con Auth/Storage mínimos que incluyen `storage.objects.owner_id text`. 011/012 no se ejecutan como instalaciones válidas: sus fallos se reproducen en `npm run test:migrations`. Instalar primero el runtime aislado indicado en `scripts/test-learning-schema.mjs`. Estos tests no prueban Supabase real. La comprobación pendiente con sesiones A/B, incluyendo RPCs y Storage HTTP, está en [SECURITY_VALIDATION.md](SECURITY_VALIDATION.md).
 
 El frontend puede conservar pendientes y avisar si 010 no está aplicada. Eso no convierte conversaciones locales en persistencia entre dispositivos. No habilitar la versión en producción como plenamente sincronizada hasta aplicar 010 y ejecutar la validación A/B.
 
 ## Verificación V0.9.7
 
-Aplicar `011_universal_sources.sql` después de 010, primero en un proyecto de prueba autorizado; repetir 010 y 011 para comprobar idempotencia. No usar SQL Editor ni service_role como prueba de aislamiento. `npm run test:schema` comprueba 001–012 en PostgreSQL local con Auth/Storage mínimos; no confirma el comportamiento del servicio Storage real. Si 008 quedó incompleta o 011 falló, seguir la recuperación 012 descrita abajo.
+Aplicar `013_repair_storage_owner_shadowing.sql`, que instala las definiciones corregidas de fuentes universales, primero en un proyecto de prueba autorizado; repetir 013 para comprobar idempotencia. No usar SQL Editor ni service_role como prueba de aislamiento. `npm run test:schema` comprueba 001–010 + 013 en PostgreSQL local con Auth/Storage mínimos; no confirma el comportamiento del servicio Storage HTTP real.
 
 011 reutiliza materials/chunks/topics/artifacts y el contrato de ordinales de unidad. Amplía source_type a PDF, imagen, DOCX, PPTX, texto, web, YouTube y apunte; agrega el bucket privado study-sources y una cola persistente academic_cleanup_jobs. La metadata incluye sourceRevision, archivedAt, processingError y source (URL, MIME, original, referencias de unidad). El original privado usa userId/courseId/materialId/original.ext; las URLs firmadas duran 600 segundos.
 
 `commit_source_document` sustituye documento, unidades, chunks y temas en una transacción con revisión esperada; invalida recursos antiguos y conserva evidencia de práctica. Archive y rename avanzan la revisión. La búsqueda ignora fuentes archivadas/en eliminación. `begin_academic_cleanup` captura los objetos reales y bloquea escrituras; el cliente borra Storage; `finish_academic_cleanup` verifica ausencia de objetos antes de borrar filas. Un fallo conserva el job y las filas para reintentar. Tombstones completos evitan que una copia vieja del navegador recree filas.
 
-Los triggers sobre storage.objects están comprobados en PostgreSQL local. Su instalación y efectos en Supabase Storage HTTP permanecen PARTIAL hasta correr el script A/B. No aplicar a producción afirmando que Storage ya fue validado. Las fuentes nuevas fallan con un aviso y conservan el material pendiente si falta 011; no se simula persistencia entre dispositivos.
+Los triggers sobre storage.objects están comprobados en PostgreSQL local. Su instalación y efectos en Supabase Storage HTTP permanecen PARTIAL hasta correr el script A/B. No aplicar a producción afirmando que Storage ya fue validado. Las fuentes nuevas fallan con un aviso y conservan el material pendiente si faltan las funciones instaladas por 013; no se simula persistencia entre dispositivos.
 
-## Recuperación 012: 008 incompleta y 011 con `uuid = text`
+## Recuperación 013: colisión de `owner_id` en Storage y 008 incompleta
 
 El error `42701: document_kind already exists` confirma que esa columna ya estaba creada. No demuestra que el resto de 008 esté completo: pueden faltar las otras columnas, la función de normalización, el índice o el backfill. 008 histórica no es repetible por su `ADD COLUMN` sin `IF NOT EXISTS`.
 
-El error `42883: operator does not exist: uuid = text`, en `academic_blob_manifest` al comparar `conversation_threads.course_id` con `course_key`, señala otra diferencia de esquema: el contexto del curso está en UUID, mientras 007/010 y el cliente actual usan claves académicas de texto. La captura permite identificar esa incompatibilidad; no permite comprobar todo el esquema remoto. `CREATE TABLE IF NOT EXISTS` de 010 conserva los tipos de una tabla preexistente. Una 008 incompleta por sí sola no cambia `conversation_threads.course_id`.
+El diagnóstico inicial de 012 atribuyó `42883: operator does not exist: uuid = text` a posibles claves de contexto UUID. **Ese error no demuestra que `conversation_threads.course_id` sea UUID.** Al incluir la columna `storage.objects.owner_id text` del esquema de Storage, se reproduce el mismo error incluso con las claves académicas correctas en texto. En una función SQL, PostgreSQL da prioridad a una columna del mismo nombre que un argumento: `t.user_id=owner_id` se interpreta como `t.user_id=o.owner_id`, comparando UUID con texto. Esto explica que 012 siguiera fallando en `academic_blob_manifest`. Los tests iniciales omitían esa columna y no cubrieron la causa real. Ver [esquema oficial de Supabase](https://github.com/supabase/supabase/blob/master/apps/docs/content/guides/storage/schema/design.mdx) y [resolución de argumentos SQL en PostgreSQL](https://www.postgresql.org/docs/16/xfunc-sql.html#XFUNC-SQL-FUNCTION-ARGUMENTS).
+
+013 conserva el nombre y la firma de la función para permitir `CREATE OR REPLACE`, pero usa `$1`, `$2`, `$3` dentro del cuerpo para referirse inequívocamente a propietario, curso y material. **No convierte `storage.objects.owner_id` a UUID ni modifica columnas del servicio Storage.** 011/012 se conservan sin editar; 013 es autónoma e incluye su instalación corregida. La reparación de tipos de contexto de 012 queda disponible únicamente si esas columnas realmente son UUID/varchar; las que ya son texto conservan su tipo.
 
 **Para recuperarlo:**
 
 1. Confirmar que 001–007 y 009 están aplicadas. No borrar tablas, conversaciones ni archivos para volver a empezar.
-2. Abrir un snippet nuevo en Supabase → SQL Editor, llamado `Migration 012`.
-3. Copiar **todo** [012_repair_pdf_and_source_schema.sql](012_repair_pdf_and_source_schema.sql), desde el primer comentario hasta el `select ... migration_status` final. No seleccionar solo unas líneas al pulsar Run.
-4. Ejecutar una vez. La última fila debe indicar `012 complete: PDF metadata, text context keys, conversations and universal sources repaired`.
-5. Ejecutar [diagnostics/verify_012_recovery.sql](diagnostics/verify_012_recovery.sql). Las claves de curso/material deben ser `text`, los IDs de propietario/conversación/mensaje deben seguir en `uuid`, las seis funciones deben aparecer `OK`, los cuatro buckets privados y las cinco tablas con RLS activado.
+2. Abrir un snippet nuevo en Supabase → SQL Editor, llamado `Migration 013`.
+3. Copiar **todo** [013_repair_storage_owner_shadowing.sql](013_repair_storage_owner_shadowing.sql), desde el primer comentario hasta el `select ... migration_status` final. No seleccionar solo unas líneas al pulsar Run.
+4. Ejecutar una vez. La última fila debe indicar `013 complete: Storage argument shadowing fixed; PDF, conversations and universal sources repaired`.
+5. Ejecutar [diagnostics/verify_013_recovery.sql](diagnostics/verify_013_recovery.sql). `Storage parameter shadowing fix` y las seis funciones deben aparecer `OK`, los cuatro buckets privados y las cinco tablas con RLS activado. Las claves de curso/material deben ser `text` y los IDs de propietario/conversación/mensaje seguir en `uuid`. Que la función exista no demuestra que esté corregida: la consulta también inspecciona los argumentos explícitos de su definición.
 6. Recargar Nexo y comprobar el curso/material existente, la conversación y una fuente nueva. La prueba de privacidad real con dos cuentas sigue en [SECURITY_VALIDATION.md](SECURITY_VALIDATION.md).
 
-**No hace falta volver a ejecutar 008, 010 ni 011 después:** 012 completa los prerrequisitos PDF y contiene las versiones auditadas de 010 y 011 dentro de una única transacción. También puede ejecutarse sobre un esquema ya completo y repetirse. Los SQL anteriores se conservan sin editar.
+**Ejecutar solo 013 para recuperarlo. No volver a ejecutar 011/012 después:** reinstalarían la función defectuosa. 013 completa los prerrequisitos de 008 y contiene las definiciones de 010/011 con la función corregida dentro de una única transacción. También puede ejecutarse sobre un esquema ya completo y repetirse. Los SQL anteriores se conservan sin editar.
 
-Si aparece `25P02: current transaction is aborted`, ejecutar por separado `ROLLBACK;` para salir de la transacción fallida y volver a ejecutar **012 completa**. Si falla por clave foránea, tipo inesperado o dependencia personalizada, la recuperación se revierte: conservar el error y el diagnóstico del esquema para resolver esa diferencia; no eliminar filas ni usar `CASCADE` como atajo.
+Si aparece `25P02: current transaction is aborted`, ejecutar por separado `ROLLBACK;` para salir de la transacción fallida y volver a ejecutar **013 completa**. Si falla por clave foránea, tipo inesperado o dependencia personalizada, la recuperación se revierte: conservar el error y el diagnóstico del esquema para resolver esa diferencia; no eliminar filas ni usar `CASCADE` como atajo.
 
 La conversión afecta exclusivamente `course_id`/`material_id` de conversaciones, evidencia y jobs existentes cuando son UUID o varchar. Conserva el valor mediante `::text`, guarda/restaura las FKs afectadas, valida las relaciones compuestas de propietario y conserva owners/threads/messages/workspaces como UUID. Si hay una referencia huérfana o de otro propietario, la FK falla y se revierte **todo**; no se inventa una vinculación ni se elimina contenido. Se preservan análisis inicializados, páginas analizadas, contenido, revisiones, evidencia, archivos y jobs pendientes/completos. Solo se completa el estado PDF que seguía en sus valores iniciales, siguiendo la correspondencia de 008.
 
-Validación: `npm run test:migrations` reproduce ambos errores y comprueba las ocho combinaciones de columnas de 008, instalación de 010/011 ausentes, repetición, conservación de datos, FKs entrantes, RPCs, aislamiento A/B y rollback de casos no seguros en PostgreSQL WASM. Es una prueba local con Auth/Storage mínimos; **la ejecución en Supabase real y Storage HTTP continúa PARTIAL** hasta aplicar y verificar allí.
+Validación: `npm run test:migrations` pasa 16 casos en PostgreSQL WASM. Reproduce la colisión real de Storage con claves académicas de texto, comprueba referencias al propietario recibido incluso con `owner_id` nulo, ajeno o no UUID, las ocho combinaciones de columnas de 008, instalación ausente, repetición, conservación de datos, FKs entrantes, RPCs, aislamiento A/B y rollback de casos no seguros. También comprueba una 012 previamente instalada que empieza a fallar cuando aparece la columna de Storage. `npm run test:schema` pasa 60 comprobaciones con el modelo ampliado de Storage. **La ejecución en Supabase real y Storage HTTP continúa PARTIAL** hasta aplicar y verificar allí.

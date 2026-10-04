@@ -41,7 +41,7 @@ El inicio de sesión descarga cursos y metadatos ligeros. Al abrir un curso se c
 
 ### Migraciones antes de producción
 
-Aplica los SQL de `sql/` **en orden**, sin editar migraciones ya ejecutadas: 001 → 006, luego `007_learning_workspace.sql` y `008_pdf_engine_v2.sql`. La migración 006 requiere la cuenta propietaria indicada en [sql/README.md](sql/README.md). Las migraciones 007 y 008 aún requieren verificación en el Supabase real del proyecto.
+Para una instalación nueva, aplica 001–010 y después `013_repair_storage_owner_shadowing.sql`, sin editar migraciones ya ejecutadas. 013 instala las funciones de 011/012 con la corrección de `owner_id` para Storage actual. Si 008 quedó incompleta o 011/012 falló, ejecuta solo la recuperación 013 después de comprobar los prerrequisitos 001–007 y 009; los pasos están en [sql/README.md](sql/README.md). La migración 006 requiere la cuenta propietaria indicada allí. La validación de RLS y Storage HTTP en Supabase real sigue pendiente.
 
 Después de aplicar 007 y 008, comprueba en SQL Editor:
 

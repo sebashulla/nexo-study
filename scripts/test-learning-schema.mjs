@@ -17,8 +17,10 @@ try {
   await db.exec(`create role authenticated; create role anon; create schema auth; create schema storage;
     create table auth.users(id uuid primary key,raw_user_meta_data jsonb default '{}');
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
-    create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[]);
-    create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,unique(bucket_id,name));
+    create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[],owner_id text);
+    create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,
+      owner uuid,owner_id text,metadata jsonb,version text,created_at timestamptz default now(),updated_at timestamptz default now(),
+      unique(bucket_id,name));
     alter table storage.objects enable row level security;
     create function storage.foldername(text) returns text[] language sql immutable as $$ select (string_to_array($1,'/'))[1:array_length(string_to_array($1,'/'),1)-1] $$;
     create function storage.filename(text) returns text language sql immutable as $$ select (string_to_array($1,'/'))[array_length(string_to_array($1,'/'),1)] $$;
@@ -27,13 +29,16 @@ try {
     grant select,insert,update,delete on storage.objects to authenticated; grant select on storage.buckets to authenticated;`)
   const migrations = (await readdir(new URL('../sql/', import.meta.url))).filter(name => /^\d+.*\.sql$/.test(name)).sort()
   for (const name of migrations) {
+    // Historical 011/012 fail on modern Storage's owner_id text column. 013
+    // installs their complete corrected definitions; regression tests reproduce
+    // the old failures separately instead of pretending they apply successfully.
+    if(name.startsWith('011') || name.startsWith('012')) continue
     if (name.startsWith('006')) await db.query('insert into auth.users(id,raw_user_meta_data) values($1,$2),($3,$4)',[a,{username:'sebasshulla'},b,{username:'user_b'}])
     await db.exec(await readFile(new URL(`../sql/${name}`,import.meta.url),'utf8'))
   }
   await db.exec(await readFile(new URL('../sql/010_conversations_learning_evidence.sql',import.meta.url),'utf8'))
-  await db.exec(await readFile(new URL('../sql/011_universal_sources.sql',import.meta.url),'utf8'))
-  await db.exec(await readFile(new URL('../sql/012_repair_pdf_and_source_schema.sql',import.meta.url),'utf8'))
-  check('all twelve migrations apply; 010, 011 and 012 are repeatable', true)
+  await db.exec(await readFile(new URL('../sql/013_repair_storage_owner_shadowing.sql',import.meta.url),'utf8'))
+  check('001–010 plus corrected 013 apply with Storage owner_id text; 010/013 are repeatable', true)
   await actor(a)
   await db.query('insert into courses(user_id,id,name) values($1,$2,$3)',[a,'course-a','Física'])
   await db.query('insert into materials(user_id,course_id,id,title) values($1,$2,$3,$4)',[a,'course-a','material-a','Cinemática'])
