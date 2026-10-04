@@ -32,7 +32,8 @@ try {
   }
   await db.exec(await readFile(new URL('../sql/010_conversations_learning_evidence.sql',import.meta.url),'utf8'))
   await db.exec(await readFile(new URL('../sql/011_universal_sources.sql',import.meta.url),'utf8'))
-  check('all eleven migrations apply; 010 and 011 are repeatable', true)
+  await db.exec(await readFile(new URL('../sql/012_repair_pdf_and_source_schema.sql',import.meta.url),'utf8'))
+  check('all twelve migrations apply; 010, 011 and 012 are repeatable', true)
   await actor(a)
   await db.query('insert into courses(user_id,id,name) values($1,$2,$3)',[a,'course-a','Física'])
   await db.query('insert into materials(user_id,course_id,id,title) values($1,$2,$3,$4)',[a,'course-a','material-a','Cinemática'])
