@@ -41,7 +41,7 @@ El inicio de sesión descarga cursos y metadatos ligeros. Al abrir un curso se c
 
 ### Migraciones antes de producción
 
-Para una instalación nueva, aplica 001–010 y después `013_repair_storage_owner_shadowing.sql`, sin editar migraciones ya ejecutadas. 013 instala las funciones de 011/012 con la corrección de `owner_id` para Storage actual. Si 008 quedó incompleta o 011/012 falló, ejecuta solo la recuperación 013 después de comprobar los prerrequisitos 001–007 y 009; los pasos están en [sql/README.md](sql/README.md). La migración 006 requiere la cuenta propietaria indicada allí. La validación de RLS y Storage HTTP en Supabase real sigue pendiente.
+Para una instalación nueva, aplica 001–010 y después `014_atomic_source_recovery.sql`, sin editar migraciones ya ejecutadas. 014 instala las funciones de 011/012/013 corregidas en una sola sentencia, sin tablas temporales. Si 008 quedó incompleta o 011/012/013 falló, ejecuta solo la recuperación 014 después de comprobar los prerrequisitos 001–007 y 009; los pasos y la verificación de nueve resultados `OK` están en [sql/README.md](sql/README.md). La migración 006 requiere la cuenta propietaria indicada allí. La validación de RLS y Storage HTTP en Supabase real sigue pendiente.
 
 Después de aplicar 007 y 008, comprueba en SQL Editor:
 

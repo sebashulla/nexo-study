@@ -7,7 +7,7 @@ import { PGlite } from '../node_modules/.cache/nexo-sql-runtime/node_modules/@el
 
 const files = (await readdir(new URL('../sql/',import.meta.url))).filter(n => /^\d+.*\.sql$/.test(n)).sort()
 const sql = Object.fromEntries(await Promise.all(files.map(async name => [name.slice(0,3),await readFile(new URL(`../sql/${name}`,import.meta.url),'utf8')])))
-const diagnostics=await readFile(new URL('../sql/diagnostics/verify_013_recovery.sql',import.meta.url),'utf8')
+const diagnostics=await readFile(new URL('../sql/diagnostics/verify_014_recovery.sql',import.meta.url),'utf8')
 const columns = [
   "document_kind text not null default 'unknown' check(document_kind in ('text','scan','mixed','unknown'))",
   "analysis_status text not null default 'not_started' check(analysis_status in ('not_started','reading','indexing','ready','partial','failed'))",
@@ -18,7 +18,7 @@ async function fixture(mask=1, through010=true) {
   const q = (statement,params=[]) => db.query(statement,params)
   const row = async (statement,params=[]) => (await q(statement,params)).rows[0]
   const actor = async id => { await db.exec('reset role; set role authenticated;'); await q("select set_config('request.jwt.claim.sub',$1,false)",[id]) }
-  const migration = async number => { await db.exec('reset role'); await db.exec(sql[number]) }
+  const migration = async number => { await db.exec('reset role'); if(number==='014') await db.query(sql[number]); else await db.exec(sql[number]) }
   const failure = async (statement,code) => {
     let caught
     try { await db.exec(statement) } catch(error) { caught=error } finally { await db.exec('rollback') }
@@ -126,8 +126,8 @@ test('Storage owner_id text reproduces the real 012 error with already-correct c
     const error=await f.failure(sql['012'],'42883')
     assert.match(error.message,/uuid = text/)
     console.log('REPRODUCED: original 012 fails with storage.objects.owner_id text, even with text course/material keys.')
-    await f.migration('013'); await f.migration('013')
-    assert.equal((await f.db.exec(diagnostics)).at(-1).rows[0].status,'OK')
+    await f.migration('014'); await f.migration('014')
+    assert((await f.q(diagnostics)).rows.every(r=>r.status==='OK'))
     const manifest=(await f.row('select academic_blob_manifest($1,$2,$3) value',[f.a,old.course,old.material])).value
     assert.deepEqual(manifest.map(x=>x.path).sort(),[old.pdf,old.image].sort(),'uses the passed owner, never Storage owner_id')
     assert.deepEqual(await f.row('select attempts,correct_attempts,confidence,legacy_baseline,evidence_count from learning_state'),baseline)
@@ -140,7 +140,7 @@ test('Storage owner_id text reproduces the real 012 error with already-correct c
   } finally { await f.db.close() }
 })
 
-test('013 also repairs partial 008/legacy UUID context, preserves data, protects A/B and cleanup',async () => {
+test('014 also repairs partial 008/legacy UUID context, preserves data, protects A/B and cleanup',async () => {
   const f=await fixture()
   try {
     const duplicate=await f.failure(sql['008'],'42701')
@@ -151,12 +151,9 @@ test('013 also repairs partial 008/legacy UUID context, preserves data, protects
     const mismatch=await f.failure(sql['011'],'42883')
     assert.match(mismatch.message,/uuid = text/)
     assert.equal(await f.row("select id from storage.buckets where id='study-sources'"),undefined,'failed 011 rolls back')
-    await f.migration('013')
-    const verification=await f.db.exec(diagnostics)
-    assert(verification[1].rows.every(r=>r.status==='OK'))
-    assert.equal(verification[2].rows.length,4); assert(verification[2].rows.every(r=>r.is_public===false))
-    assert.equal(verification[3].rows.length,5); assert(verification[3].rows.every(r=>r.rls_enabled===true))
-    assert.equal(verification.at(-1).rows[0].status,'OK')
+    await f.migration('014')
+    const verification=(await f.q(diagnostics)).rows
+    assert.equal(verification.length,9); assert(verification.every(r=>r.status==='OK'))
     const types=(await f.q("select table_name,column_name,data_type from information_schema.columns where table_schema='public' and table_name in ('conversation_threads','concept_evidence') and column_name in ('course_id','material_id')")).rows
     assert.equal(types.length,4); assert(types.every(c=>c.data_type==='text'))
     for(const col of ['user_id','id','workspace_id']) assert.equal((await f.row('select data_type from information_schema.columns where table_name=$1 and column_name=$2',['conversation_threads',col])).data_type,'uuid')
@@ -168,7 +165,7 @@ test('013 also repairs partial 008/legacy UUID context, preserves data, protects
     assert.equal(Number((await f.row('select count(*) n from storage.objects')).n),2)
     assert((await f.row("select 1 from pg_constraint where conname='legacy_evidence_thread' and convalidated")),'inbound FK retained and validated')
     const constraintCount=(await f.row('select count(*) n from pg_constraint')).n
-    await f.migration('013')
+    await f.migration('014')
     assert.equal((await f.row('select count(*) n from pg_constraint')).n,constraintCount,'no duplicate constraints on repeat')
     assert.deepEqual(await f.row('select attempts,correct_attempts,confidence,legacy_baseline,evidence_count from learning_state'),baseline)
     await f.actor(f.a)
@@ -200,14 +197,14 @@ test('013 also repairs partial 008/legacy UUID context, preserves data, protects
   } finally { await f.db.close() }
 })
 
-for(let mask=0;mask<8;mask++) test(`013: partial 008 combination ${mask.toString(2).padStart(3,'0')}, absent 010/011, repair and repeat`,async () => {
+for(let mask=0;mask<8;mask++) test(`014: partial 008 combination ${mask.toString(2).padStart(3,'0')}, absent 010/011, repair and repeat`,async () => {
   const f=await fixture(mask,false)
   try {
     await f.q("insert into courses(user_id,id,name) values($1,'course-old','Curso')",[f.a])
     await f.q("insert into materials(user_id,course_id,id,title,content,metadata) values($1,'course-old','material-old','Texto','Contenido conservado', '{\"sourceRevision\":7}')",[f.a])
     if(mask&2) await f.q("update materials set analysis_status='partial' where id='material-old'")
     if(mask&4) await f.q("update materials set analyzed_pages='{1,2}' where id='material-old'")
-    await f.migration('013'); await f.migration('013')
+    await f.migration('014'); await f.migration('014')
     const material=await f.row("select * from materials where id='material-old'")
     assert.equal(material.content,'Contenido conservado'); assert.equal(material.metadata.sourceRevision,7)
     assert.equal(material.analysis_status,mask&2?'partial':'ready')
@@ -218,11 +215,11 @@ for(let mask=0;mask<8;mask++) test(`013: partial 008 combination ${mask.toString
   } finally { await f.db.close() }
 })
 
-test('already complete 013: preserve initialized analysis, revisions, originals and pending/completed jobs',async () => {
+test('already complete 014: preserve initialized analysis, revisions, originals and pending/completed jobs',async () => {
   const f=await fixture(0)
   try {
     await f.migration('008')
-    await f.migration('013')
+    await f.migration('014')
     const old=await seed(f)
     await f.actor(f.a)
     await f.q("update materials set analysis_status='partial',document_kind='mixed',analyzed_pages='{1,3}',metadata='{\"sourceRevision\":9}' where id=$1",[old.material])
@@ -233,7 +230,7 @@ test('already complete 013: preserve initialized analysis, revisions, originals 
     await f.q('select finish_academic_cleanup($1)',[complete.id])
     const before=await f.row('select content,metadata,analysis_status,document_kind,analyzed_pages,updated_at from materials where id=$1',[old.material])
     const jobs=(await f.q('select * from academic_cleanup_jobs order by id')).rows
-    await f.migration('013'); await f.migration('013')
+    await f.migration('014'); await f.migration('014')
     assert.deepEqual(await f.row('select content,metadata,analysis_status,document_kind,analyzed_pages,updated_at from materials where id=$1',[old.material]),before)
     assert.deepEqual((await f.q('select * from academic_cleanup_jobs order by id')).rows,jobs)
     assert.equal(Number((await f.row('select count(*) n from storage.objects')).n),2)
@@ -249,7 +246,7 @@ test('orphan legacy context: fail and roll back instead of deleting or relinking
     await f.db.exec(drift)
     await f.q('update conversation_threads set course_id=$1 where id=$2',[randomUUID(),old.thread])
     const before=await f.row('select * from conversation_threads where id=$1',[old.thread])
-    await f.failure(sql['013'],'23503')
+    await f.failure(sql['014'],'23503')
     assert.deepEqual(await f.row('select * from conversation_threads where id=$1',[old.thread]),before)
     assert.equal((await f.row("select data_type from information_schema.columns where table_name='conversation_threads' and column_name='course_id'")).data_type,'uuid')
     assert.equal(await f.row("select 1 from information_schema.columns where table_name='materials' and column_name='analysis_status'"),undefined)
@@ -262,14 +259,14 @@ test('unrecognized context type: explicit error and no partial changes',async ()
   const f=await fixture(0,false)
   try {
     await f.db.exec('create table conversation_threads(id uuid primary key,user_id uuid,course_id integer,material_id text)')
-    const error=await f.failure(sql['013'],'P0001')
+    const error=await f.failure(sql['014'],'P0001')
     assert.match(error.message,/unsupported type integer/)
     assert.equal(await f.row("select 1 from information_schema.columns where table_name='materials' and column_name='document_kind'"),undefined)
     assert.equal(await f.row("select id from storage.buckets where id='study-sources'"),undefined)
   } finally { await f.db.close() }
 })
 
-test('013 repairs a previously installed 012 after Storage adds owner_id text',async () => {
+test('014 repairs a previously installed 012 after Storage adds owner_id text',async () => {
   const f=await fixture(0)
   try {
     await f.migration('008')
@@ -280,12 +277,12 @@ test('013 repairs a previously installed 012 after Storage adds owner_id text',a
     const old=await seed(f)
     const before=await f.row('select * from conversation_messages where id=$1',[old.message])
     await f.db.exec('alter table storage.objects add column owner_id text; alter table storage.buckets add column owner_id text')
-    assert.equal((await f.db.exec(diagnostics)).at(-1).rows[0].status,'OUTDATED: run the complete 013 recovery')
+    assert((await f.q(diagnostics)).rows.some(r=>r.status==='REVISAR'))
     await assert.rejects(f.q('select academic_blob_manifest($1,$2,$3)',[f.a,old.course,old.material]),error=>error.code==='42883')
-    await f.migration('013'); await f.migration('013')
+    await f.migration('014'); await f.migration('014')
     assert.deepEqual(await f.row('select * from conversation_messages where id=$1',[old.message]),before)
     const manifest=(await f.row('select academic_blob_manifest($1,$2,$3) value',[f.a,old.course,old.material])).value
     assert.deepEqual(manifest.map(x=>x.path).sort(),[old.pdf,old.image].sort())
-    assert.equal((await f.db.exec(diagnostics)).at(-1).rows[0].status,'OK')
+    assert((await f.q(diagnostics)).rows.every(r=>r.status==='OK'))
   } finally { await f.db.close() }
 })

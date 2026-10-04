@@ -29,16 +29,16 @@ try {
     grant select,insert,update,delete on storage.objects to authenticated; grant select on storage.buckets to authenticated;`)
   const migrations = (await readdir(new URL('../sql/', import.meta.url))).filter(name => /^\d+.*\.sql$/.test(name)).sort()
   for (const name of migrations) {
-    // Historical 011/012 fail on modern Storage's owner_id text column. 013
-    // installs their complete corrected definitions; regression tests reproduce
-    // the old failures separately instead of pretending they apply successfully.
-    if(name.startsWith('011') || name.startsWith('012')) continue
+    // 014 installs the complete recovery as one statement. Older 011/012 have
+    // Storage argument shadowing; 013 depends on interstatement temp-table state.
+    // Regression tests reproduce those failures separately.
+    if(['011','012','013'].some(prefix=>name.startsWith(prefix))) continue
     if (name.startsWith('006')) await db.query('insert into auth.users(id,raw_user_meta_data) values($1,$2),($3,$4)',[a,{username:'sebasshulla'},b,{username:'user_b'}])
     await db.exec(await readFile(new URL(`../sql/${name}`,import.meta.url),'utf8'))
   }
   await db.exec(await readFile(new URL('../sql/010_conversations_learning_evidence.sql',import.meta.url),'utf8'))
-  await db.exec(await readFile(new URL('../sql/013_repair_storage_owner_shadowing.sql',import.meta.url),'utf8'))
-  check('001–010 plus corrected 013 apply with Storage owner_id text; 010/013 are repeatable', true)
+  await db.query(await readFile(new URL('../sql/014_atomic_source_recovery.sql',import.meta.url),'utf8'))
+  check('001–010 plus atomic 014 apply with Storage owner_id text; 010/014 are repeatable', true)
   await actor(a)
   await db.query('insert into courses(user_id,id,name) values($1,$2,$3)',[a,'course-a','Física'])
   await db.query('insert into materials(user_id,course_id,id,title) values($1,$2,$3,$4)',[a,'course-a','material-a','Cinemática'])

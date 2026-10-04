@@ -14,7 +14,7 @@
     "test:engine": "node --test server/aiEngine.test.mjs",
     "test:security:live": "node scripts/validate-academic-security.mjs",
     "test:schema": "node scripts/test-learning-schema.mjs",
-    "test:migrations": "node --test scripts/test-migration-recovery.mjs"
+    "test:migrations": "node --test scripts/test-migration-recovery.mjs scripts/test-atomic-migration.mjs"
   },
   "dependencies": {
     "@fontsource/dm-sans": "^5.3.0",

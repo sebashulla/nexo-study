@@ -1,4 +1,4 @@
-// Run against a disposable Supabase project after 001–010 + corrected recovery 013.
+// Run against a disposable Supabase project after 001–010 + atomic recovery 014.
 // Uses ordinary user sessions. No service role and no existing content is deleted.
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
